@@ -1,6 +1,6 @@
-# ==============================================================
+# =============================================================
 # EscalateAI – Escalation Management Tool with Email Parsing
-# --------------------------------------------------------------
+# -------------------------------------------------------------
 # • Parses emails from inbox configured in .env
 # • Logs escalations directly into database every minute
 # • Predicts sentiment (rule-based + transformer), urgency, and risk in real-time
@@ -9,9 +9,9 @@
 # • Logs scheduler activity and allows pause/resume controls
 # • Notifies when new escalation is added
 # • Filters by urgency, sentiment, date, escalation status
-# --------------------------------------------------------------
-# Author: Naveen Gandham • v1.5.0 • August 2025
-# ==============================================================
+# -------------------------------------------------------------
+# Author: Naveen Gandham • v1.5.0 • August 2025
+# =============================================================
 
 import os, re, sqlite3, email
 from email.mime.text import MIMEText
@@ -247,8 +247,8 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Upload Excel with columns: customer, issue, date_reported (optional)", type=["xlsx"])
     if uploaded_file:
         try:
-            df = pd.read_excel(uploaded_file)
-            for idx, row in df.iterrows():
+            df_upload = pd.read_excel(uploaded_file)
+            for idx, row in df_upload.iterrows():
                 cust = row.get("customer", "Unknown")
                 issue = str(row.get("issue", ""))
                 date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -268,7 +268,12 @@ with st.sidebar:
 
 # Load escalations for dashboard
 with sqlite3.connect(DB_PATH) as conn:
-    df = pd.read_sql("SELECT * FROM escalations ORDER BY datetime(created_at) DESC", conn)
+    try:
+        # Fixed query - removed datetime() call
+        df = pd.read_sql("SELECT * FROM escalations ORDER BY created_at DESC", conn)
+    except Exception as e:
+        st.error(f"Database read error: {e}")
+        df = pd.DataFrame()
 
 # Filters
 st.header("Escalations Dashboard")
