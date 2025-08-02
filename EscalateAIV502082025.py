@@ -29,6 +29,7 @@ import email
 from email.header import decode_header
 import os
 from dotenv import load_dotenv
+
 import streamlit as st
 import imaplib
 import email
@@ -40,44 +41,42 @@ import re
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-# Gmail credentials from environment variables or user input
-EMAIL = os.getenv("GMAIL_USER") or st.text_input("Enter your Gmail address")
-APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD") or st.text_input("Enter your Gmail App Password", type="password")
+EMAIL = os.getenv("GMAIL_USER") or st.text_input("Enter your Gmail address", key="email_input")
+APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD") or st.text_input("Enter your Gmail App Password", type="password", key="app_pass_input")
 
 def connect_and_fetch_emails():
     if not EMAIL or not APP_PASSWORD:
-        st.warning("🔐 Please provide your Gmail and App Password.")
+        st.warning("🔐 Please provide your Gmail and App Password.", key="warn_gmail_credentials")
         return []
 
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(EMAIL, APP_PASSWORD)
-        st.success("📡 Connected to Gmail.")
+        st.success("📡 Connected to Gmail.", key="success_gmail_connection")
     except imaplib.IMAP4.error as e:
-        st.error(f"❌ Gmail login failed: {str(e)}")
+        st.error(f"❌ Gmail login failed: {str(e)}", key="error_gmail_login")
         return []
 
     status, messages = mail.select("inbox")
     if status != 'OK':
-        st.error("❌ Could not select the inbox.")
+        st.error("❌ Could not select the inbox.", key="error_select_inbox")
         return []
 
     result, data = mail.search(None, '(UNSEEN)')
-    st.write("🔍 Search result:", result)
-    st.write("📬 Raw data from search:", data)
+    st.write("🔍 Search result:", result, key="search_result")
+    st.write("📬 Raw data from search:", data, key="raw_data_search")
 
     if result != 'OK':
-        st.info("📭 No unread emails found.")
+        st.info("📭 No unread emails found.", key="info_no_unread")
         return []
 
     email_ids = data[0].split()
-    st.write(f"📧 Found {len(email_ids)} unread emails.")
+    st.write(f"📧 Found {len(email_ids)} unread emails.", key="found_unread_count")
     fetched_emails = []
 
-    for num in email_ids[-10:]:  # Check only last 10 unseen emails for performance
+    for num in email_ids[-10:]:
         result, msg_data = mail.fetch(num, '(RFC822)')
         if result != 'OK':
             continue
@@ -114,19 +113,9 @@ def connect_and_fetch_emails():
             "date": date
         })
 
-        # Mark as seen to avoid processing again
         mail.store(num, '+FLAGS', '\\Seen')
 
     mail.logout()
-
-    # Save to Excel file
-    df_emails = pd.DataFrame(fetched_emails)
-    if not df_emails.empty:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        excel_filename = f"fetched_emails_{timestamp}.xlsx"
-        df_emails.to_excel(excel_filename, index=False)
-        st.success(f"📄 Saved fetched emails to: {excel_filename}")
-
     return fetched_emails
 
 def analyze_and_log_emails(fetched_emails):
@@ -141,7 +130,7 @@ def analyze_and_log_emails(fetched_emails):
 
         cursor.execute("SELECT COUNT(*) FROM escalations WHERE customer=? AND issue=?", (from_email, body))
         if cursor.fetchone()[0] > 0:
-            continue  # Skip duplicate
+            continue
 
         urgency_keywords = ['urgent', 'immediately', 'critical', 'fail', 'escalate', 'issue', 'problem', 'complaint']
         sentiment_score = sum(1 for word in urgency_keywords if word in body.lower())
@@ -153,24 +142,27 @@ def analyze_and_log_emails(fetched_emails):
         escalation_id = f"SESICE-{count}"
 
         cursor.execute("""
-            INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (escalation_id, from_email, body[:500], date, "Open", sentiment, priority))
+            INSERT INTO escalations (id, customer, issue, date_reported, rule_sentiment, transformer_sentiment, urgency, escalated, status, owner, action_status, last_updated, escalation_level)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            escalation_id, from_email, body[:500], date, sentiment, sentiment, priority, 1, "Open", "", "Pending", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 1
+        ))
 
     conn.commit()
     conn.close()
 
-# Example usage within app
 st.header("📬 Gmail Escalation Fetcher")
-if st.button("🔄 Fetch Emails"):
+
+if st.button("🔄 Fetch Emails", key="fetch_emails_button"):
     emails = connect_and_fetch_emails()
     if emails:
         analyze_and_log_emails(emails)
-        st.success(f"✅ {len(emails)} emails analyzed and logged if valid.")
-        st.dataframe(pd.DataFrame(emails))
+        st.success(f"✅ {len(emails)} emails analyzed and logged if valid.", key="success_email_logged")
+        st.dataframe(pd.DataFrame(emails), key="email_dataframe")
     else:
-        st.info("📪 No new emails or error in fetching.")
+        st.info("📪 No new emails or error in fetching.", key="info_no_emails")
 
+# --- Add unique keys to all other widgets in your full app similarly ---
 
 # Streamlit UI
 st.header("📬 Gmail Escalation Fetcher")
