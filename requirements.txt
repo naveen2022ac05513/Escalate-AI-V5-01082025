@@ -13,3 +13,4 @@ pyodbc
 fastapi
 uvicorn
 imapclient
+beautifulsoup4
