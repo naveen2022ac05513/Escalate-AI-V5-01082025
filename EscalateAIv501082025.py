@@ -74,9 +74,7 @@ def analyze_issue(text: str) -> Tuple[str, str, str, bool]:
     transformer = transformer_sent(text)
     urgency = "High" if any(k in text.lower() for k in ["urgent", "immediate", "critical", "asap"]) else "Low"
     escalate = (rule == "Negative" or transformer == "Negative") and urgency == "High"
-    # For dashboard, we only save one sentiment column as 'sentiment' (use rule sentiment for simplicity)
-    sentiment = rule
-    return rule, transformer, urgency, escalate, sentiment
+    return rule, transformer, urgency, escalate
 
 # ----------------------- Notification -----------------------
 def send_alert_email(issue_summary):
@@ -94,37 +92,29 @@ def send_alert_email(issue_summary):
 
 # ----------------------- Insert -----------------------
 def insert_escalation(data: dict):
-    data["id"] = f"SESICE-{str(uuid.uuid4())[:8].upper()}"
+    data["escalation_id"] = f"SESICE-{str(uuid.uuid4())[:8].upper()}"
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS escalations (
-                id TEXT PRIMARY KEY,
+                escalation_id TEXT PRIMARY KEY,
                 customer TEXT,
                 issue TEXT,
-                criticality TEXT,
-                impact TEXT,
-                sentiment TEXT,
+                date_reported TEXT,
+                rule_sentiment TEXT,
+                transformer_sentiment TEXT,
                 urgency TEXT,
                 escalated INTEGER,
-                date_reported TEXT,
-                owner TEXT,
-                status TEXT,
-                action_taken TEXT,
-                risk_score REAL,
-                spoc_email TEXT,
-                spoc_boss_email TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Prepare insert keys and values
         cols = ",".join(data.keys())
         vals = tuple(data.values())
         placeholders = ",".join(["?"] * len(data))
         conn.execute(f"INSERT INTO escalations ({cols}) VALUES ({placeholders})", vals)
         conn.commit()
-    # Send alert email only if escalated is True
-    if data.get("sentiment") == "Negative" and data.get("urgency") == "High":
-        send_alert_email(f"Escalation ID: {data['id']}\nCustomer: {data['customer']}\nIssue: {data['issue'][:200]}")
+    if data["rule_sentiment"] == "Negative" or data["transformer_sentiment"] == "Negative":
+        if data["urgency"] == "High":
+            send_alert_email(f"Escalation ID: {data['escalation_id']}\nCustomer: {data['customer']}\nIssue: {data['issue'][:200]}")
 
 # ----------------------- Email Parser -----------------------
 def parse_emails():
@@ -153,25 +143,18 @@ def parse_emails():
                 else:
                     body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
                 clean_body = BeautifulSoup(body, "html.parser").get_text()
-                rule, transformer, urgency, escalate, sentiment = analyze_issue(clean_body)
+                rule, transformer, urgency, escalate = analyze_issue(clean_body)
                 insert_escalation({
                     "customer": from_email,
                     "issue": clean_body[:500],
-                    "criticality": None,
-                    "impact": None,
-                    "sentiment": sentiment,
-                    "urgency": urgency,
-                    "escalated": int(escalate),
                     "date_reported": date,
-                    "owner": None,
-                    "status": None,
-                    "action_taken": None,
-                    "risk_score": None,
-                    "spoc_email": None,
-                    "spoc_boss_email": None
+                    "rule_sentiment": rule,
+                    "transformer_sentiment": transformer,
+                    "urgency": urgency,
+                    "escalated": int(escalate)
                 })
                 parsed_count += 1
-                logging.info(f"🔔 Escalation from {from_email} logged with sentiment={sentiment}, urgency={urgency}.")
+                logging.info(f"🔔 Escalation from {from_email} logged with rule={rule}, transformer={transformer}, urgency={urgency}.")
     except Exception as e:
         logging.error(f"❌ Failed to fetch emails: {e}")
         st.error("❌ Failed to connect to email server. Check credentials or network.")
@@ -220,22 +203,15 @@ with st.sidebar:
     manual_issue = st.text_area("Issue Description")
     if st.button("Add Escalation Manually"):
         if manual_customer.strip() and manual_issue.strip():
-            rule, transformer, urgency, escalated, sentiment = analyze_issue(manual_issue)
+            rs, ts, urgency, escalated = analyze_issue(manual_issue)
             insert_escalation({
                 "customer": manual_customer,
                 "issue": manual_issue,
-                "criticality": None,
-                "impact": None,
-                "sentiment": sentiment,
+                "date_reported": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "rule_sentiment": rs,
+                "transformer_sentiment": ts,
                 "urgency": urgency,
                 "escalated": int(escalated),
-                "date_reported": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "owner": None,
-                "status": None,
-                "action_taken": None,
-                "risk_score": None,
-                "spoc_email": None,
-                "spoc_boss_email": None
             })
             st.success("Escalation added!")
         else:
@@ -252,22 +228,15 @@ with st.sidebar:
                 cust = row.get("customer", "Unknown")
                 issue = str(row.get("issue", ""))
                 date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                rule, transformer, urgency, escalated, sentiment = analyze_issue(issue)
+                rs, ts, urgency, escalated = analyze_issue(issue)
                 insert_escalation({
                     "customer": cust,
                     "issue": issue,
-                    "criticality": None,
-                    "impact": None,
-                    "sentiment": sentiment,
+                    "date_reported": date_reported,
+                    "rule_sentiment": rs,
+                    "transformer_sentiment": ts,
                     "urgency": urgency,
                     "escalated": int(escalated),
-                    "date_reported": date_reported,
-                    "owner": None,
-                    "status": None,
-                    "action_taken": None,
-                    "risk_score": None,
-                    "spoc_email": None,
-                    "spoc_boss_email": None
                 })
             st.success("Escalations imported successfully!")
         except Exception as e:
@@ -275,21 +244,18 @@ with st.sidebar:
 
 # Load escalations for dashboard
 with sqlite3.connect(DB_PATH) as conn:
-    df = pd.read_sql("SELECT * FROM escalations ORDER BY datetime(created_at) DESC", conn)
-
-# Show DataFrame columns for debug
-st.write("📄 Columns in DataFrame:", df.columns.tolist())
+    # FIX: Remove datetime() wrapper, order directly by created_at
+    df = pd.read_sql("SELECT * FROM escalations ORDER BY created_at DESC", conn)
 
 # Filters
 st.header("Escalations Dashboard")
 
 filter_choice = st.radio("Escalation Status:", ["All", "Escalated Only", "Non-Escalated"])
 urgency_filter = st.selectbox("Urgency:", ["All"] + sorted(df["urgency"].dropna().unique()) if not df.empty else [])
-sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["sentiment"].dropna().unique()) if not df.empty else [])
-
+sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["rule_sentiment"].dropna().unique()) if "rule_sentiment" in df.columns else ["All"])
 date_range = st.date_input("Date Range:", [])
 
-# Apply filters
+# Filtering based on selection
 if filter_choice == "Escalated Only":
     df = df[df["escalated"] == 1]
 elif filter_choice == "Non-Escalated":
@@ -298,8 +264,8 @@ elif filter_choice == "Non-Escalated":
 if urgency_filter != "All":
     df = df[df["urgency"] == urgency_filter]
 
-if sentiment_filter != "All":
-    df = df[df["sentiment"] == sentiment_filter]
+if sentiment_filter != "All" and "rule_sentiment" in df.columns:
+    df = df[df["rule_sentiment"] == sentiment_filter]
 
 if date_range and len(date_range) == 2:
     start_date = date_range[0].strftime("%Y-%m-%d")
@@ -310,7 +276,7 @@ if df.empty:
     st.info("No escalations found.")
 else:
     for _, row in df.iterrows():
-        with st.expander(f"{row['id']} - {row['customer']} ({row['sentiment']}/{row['urgency']})"):
+        with st.expander(f"{row['escalation_id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
             st.markdown(f"**Issue:** {row['issue']}")
             st.markdown(f"**Escalated:** {'Yes' if row['escalated'] else 'No'}")
             st.markdown(f"**Date:** {row['date_reported']}")
@@ -322,40 +288,5 @@ else:
         mime="text/csv"
     )
 
-# ----------------------- Manual Parser -----------------------
-with st.expander("✍️ Manually Parse Email"):
-    st.markdown("Use this form to test email parsing manually or input an email issue when IMAP fails.")
-
-    manual_email = st.text_area("Paste email body or issue here", height=200)
-    manual_sender = st.text_input("Customer Email")
-    manual_date = st.date_input("Date Reported", datetime.today())
-
-    if st.button("Parse and Log Manually"):
-        if manual_email and manual_sender:
-            rule, transformer, urgency, escalate, sentiment = analyze_issue(manual_email)
-            insert_escalation({
-                "customer": manual_sender.lower(),
-                "issue": manual_email[:500],
-                "criticality": None,
-                "impact": None,
-                "sentiment": sentiment,
-                "urgency": urgency,
-                "escalated": int(escalate),
-                "date_reported": str(manual_date),
-                "owner": None,
-                "status": None,
-                "action_taken": None,
-                "risk_score": None,
-                "spoc_email": None,
-                "spoc_boss_email": None
-            })
-            st.success(f"✅ Manually logged escalation with urgency = {urgency}, sentiment = {sentiment}")
-        else:
-            st.error("Please provide both the issue text and customer email.")
-
-    st.download_button(
-        "📥 Download Filtered Escalations (CSV)",
-        df.to_csv(index=False).encode(),
-        file_name="escalations_filtered.csv",
-        mime="text/csv"
-    )
+# Optional: Inspect DataFrame columns
+st.write("📄 Columns in DataFrame:", df.columns.tolist())
