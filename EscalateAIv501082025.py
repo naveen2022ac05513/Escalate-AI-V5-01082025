@@ -255,8 +255,7 @@ st.header("Escalations Dashboard")
 
 filter_choice = st.radio("Escalation Status:", ["All", "Escalated Only", "Non-Escalated"])
 urgency_filter = st.selectbox("Urgency:", ["All"] + sorted(df["urgency"].unique()) if not df.empty else [])
-# Using rule_sentiment here but you can change to transformer_sentiment or combine as needed
-sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["rule_sentiment"].unique()) if not df.empty else [])
+sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["sentiment"].unique()) if not df.empty else [])
 date_range = st.date_input("Date Range:", [])
 
 if filter_choice == "Escalated Only":
@@ -267,8 +266,30 @@ elif filter_choice == "Non-Escalated":
 if urgency_filter != "All":
     df = df[df["urgency"] == urgency_filter]
 
-import streamlit as st
-import logging
+if sentiment_filter != "All":
+    df = df[df["sentiment"] == sentiment_filter]
+
+if date_range and len(date_range) == 2:
+    start_date = date_range[0].strftime("%Y-%m-%d")
+    end_date = date_range[1].strftime("%Y-%m-%d")
+    df = df[(df["date_reported"] >= start_date) & (df["date_reported"] <= end_date)]
+
+if df.empty:
+    st.info("No escalations found.")
+else:
+    for _, row in df.iterrows():
+        with st.expander(f"{row['id']} - {row['customer']} ({row['sentiment']}/{row['urgency']})"):
+            st.markdown(f"**Issue:** {row['issue']}")
+            st.markdown(f"**Escalated:** {'Yes' if row['escalated'] else 'No'}")
+            st.markdown(f"**Date:** {row['date_reported']}")
+
+    st.download_button(
+        "📥 Download Filtered Escalations (CSV)",
+        df.to_csv(index=False).encode(),
+        file_name="escalations_filtered.csv",
+        mime="text/csv"
+    )
+
 
 # Optional: Set up logging
 logging.basicConfig(level=logging.INFO)
