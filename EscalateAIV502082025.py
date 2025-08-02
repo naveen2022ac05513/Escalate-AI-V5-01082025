@@ -45,8 +45,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Gmail credentials from environment variables or user input
-EMAIL = os.getenv("GMAIL_USER") or st.text_input("Enter your Gmail address")
-APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD") or st.text_input("Enter your Gmail App Password", type="password")
+EMAIL = os.getenv("GMAIL_USER")
+APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 def connect_and_fetch_emails():
     if not EMAIL or not APP_PASSWORD:
