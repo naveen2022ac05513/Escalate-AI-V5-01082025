@@ -269,7 +269,27 @@ if urgency_filter != "All":
 
 if sentiment_filter != "All":
     df = df[df["rule_sentiment"] == sentiment_filter]
+import streamlit as st
+import logging
 
+# Optional: Set up logging
+logging.basicConfig(level=logging.INFO)
+
+# Inspect DataFrame columns
+st.write("📄 Columns in DataFrame:", df.columns.tolist())
+
+# Safely apply sentiment filter
+if "rule_sentiment" in df.columns:
+    df = df[df["rule_sentiment"] == sentiment_filter]
+    st.success(f"✅ Filter applied for sentiment: {sentiment_filter}")
+    logging.info(f"Applied sentiment filter: {sentiment_filter}")
+else:
+    st.warning("⚠️ Column 'rule_sentiment' not found in data. Sentiment filter skipped.")
+    logging.warning("Missing 'rule_sentiment' column — skipping filter.")
+
+# 👇 Your existing code continues from here
+# For example:
+# results = process_escalations(df)
 if date_range and len(date_range) == 2:
     start_date = date_range[0].strftime("%Y-%m-%d")
     end_date = date_range[1].strftime("%Y-%m-%d")
