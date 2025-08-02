@@ -44,9 +44,10 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Gmail credentials from environment variables or user input
-EMAIL = os.getenv("GMAIL_USER")
-APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+# Match .env variables
+EMAIL = os.getenv("EMAIL_USER") or st.text_input("Enter your Gmail address")
+APP_PASSWORD = os.getenv("EMAIL_PASS") or st.text_input("Enter your Gmail App Password", type="password")
+EMAIL_SERVER = os.getenv("EMAIL_SERVER") or "imap.gmail.com"
 
 def connect_and_fetch_emails():
     if not EMAIL or not APP_PASSWORD:
@@ -54,7 +55,7 @@ def connect_and_fetch_emails():
         return []
 
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail = imaplib.IMAP4_SSL(EMAIL_SERVER)
         mail.login(EMAIL, APP_PASSWORD)
     except imaplib.IMAP4.error as e:
         st.error(f"❌ Gmail login failed: {str(e)}")
