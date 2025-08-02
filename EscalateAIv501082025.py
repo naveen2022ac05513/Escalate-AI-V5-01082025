@@ -267,8 +267,6 @@ elif filter_choice == "Non-Escalated":
 if urgency_filter != "All":
     df = df[df["urgency"] == urgency_filter]
 
-if sentiment_filter != "All":
-    df = df[df["rule_sentiment"] == sentiment_filter]
 import streamlit as st
 import logging
 
@@ -286,6 +284,8 @@ if "rule_sentiment" in df.columns:
 else:
     st.warning("⚠️ Column 'rule_sentiment' not found in data. Sentiment filter skipped.")
     logging.warning("Missing 'rule_sentiment' column — skipping filter.")
+if sentiment_filter != "All":
+    df = df[df["rule_sentiment"] == sentiment_filter]
 
 # 👇 Your existing code continues from here
 # For example:
