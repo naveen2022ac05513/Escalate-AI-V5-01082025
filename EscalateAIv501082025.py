@@ -175,6 +175,15 @@ if 'email_scheduler' not in st.session_state:
     st.session_state['scheduler_status'] = True
     st.session_state['email_scheduler'] = True
 
+# ----------------------- Manual Email Parser -----------------------
+st.sidebar.markdown("---")
+st.sidebar.header("📬 Email Controls")
+
+if st.sidebar.button("Manually Parse Emails"):
+    with st.spinner("Checking inbox..."):
+        parse_emails()
+
+
 # Streamlit UI
 st.title("🚀 EscalateAI - Escalation Management")
 
