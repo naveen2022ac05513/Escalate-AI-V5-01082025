@@ -321,28 +321,35 @@ with st.sidebar:
 
     st.header("Upload Excel")
     uploaded_file = st.file_uploader("Upload Excel with columns: customer, issue, date_reported (optional)", type=["xlsx"])
-    if uploaded_file:
+       if uploaded_file:
         try:
-            df_upload = pd.read_excel(uploaded_file)
-              for idx, row in df_upload.iterrows():
-                cust = row.get("customer", "Unknown")
-                issue = str(row.get("issue", ""))
-                date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                rs, ts, urgency, escalated = analyze_issue(issue)
-                try:
-                    insert_escalation({
-                        "customer": cust,
-                        "issue": issue,
-                        "date_reported": date_reported,
-                        "rule_sentiment": rs,
-                        "transformer_sentiment": ts,
-                        "urgency": urgency,
-                        "escalated": int(escalated),
-                    })
-                except sqlite3.IntegrityError as e:
-                    st.error(f"Duplicate ID error while inserting row {idx + 1}: {e}")
-                    # Optionally, skip or break here
-                time.sleep(0.1)  # wait 100 ms between inserts to reduce race condition
+            df_upload = pd.read_excel(uploaded_file, engine="openpyxl")
+            required_cols = {"customer", "issue"}
+            if not required_cols.issubset(df_upload.columns.str.lower()):
+                st.error("Excel must contain at least 'customer' and 'issue' columns.")
+            else:
+                st.success("File uploaded successfully. Processing...")
+                for idx, row in df_upload.iterrows():
+                    cust = row.get("customer", "Unknown")
+                    issue = str(row.get("issue", ""))
+                    date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                    rs, ts, urgency, escalated = analyze_issue(issue)
+                    try:
+                        insert_escalation({
+                            "customer": cust,
+                            "issue": issue,
+                            "date_reported": date_reported,
+                            "rule_sentiment": rs,
+                            "transformer_sentiment": ts,
+                            "urgency": urgency,
+                            "escalated": int(escalated),
+                        })
+                    except sqlite3.IntegrityError as e:
+                        st.error(f"Duplicate ID error while inserting row {idx + 1}: {e}")
+                    time.sleep(0.1)  # prevent collision
+                st.success("Bulk upload completed.")
+        except Exception as e:
+            st.error(f"Failed to process file: {e}")
 
 
 
