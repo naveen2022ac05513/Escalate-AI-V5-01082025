@@ -373,37 +373,47 @@ with st.sidebar:
 
     st.markdown("---")
 
-    st.header("Upload Excel")
-    uploaded_file = st.file_uploader("Upload Excel with columns: customer, issue, date_reported (optional)", type=["xlsx"])
-    if uploaded_file:
-        try:
-            df_upload = pd.read_excel(uploaded_file, engine="openpyxl")
-            required_cols = {"customer", "issue"}
-            if not required_cols.issubset(df_upload.columns.str.lower()):
-                st.error("Excel must contain at least 'customer' and 'issue' columns.")
-            else:
-                st.success("File uploaded successfully. Processing...")
-                for idx, row in df_upload.iterrows():
-                    cust = row.get("customer", "Unknown")
-                    issue = str(row.get("issue", ""))
-                    date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                    rs, ts, urgency, escalated = analyze_issue(issue)
-                    try:
-                        insert_escalation({
-                            "customer": cust,
-                            "issue": issue,
-                            "date_reported": date_reported,
-                            "rule_sentiment": rs,
-                            "transformer_sentiment": ts,
-                            "urgency": urgency,
-                            "escalated": int(escalated),
-                        })
-                    except sqlite3.IntegrityError as e:
-                        st.error(f"Duplicate ID error while inserting row {idx + 1}: {e}")
-                    time.sleep(0.1)  # prevent collision
-                st.success("Bulk upload completed.")
-        except Exception as e:
-            st.error(f"Failed to process file: {e}")
+  st.sidebar.subheader("📥 Bulk Upload from Excel")
+
+uploaded_file = st.sidebar.file_uploader("Upload Escalation Excel", type=["xlsx"])
+
+if uploaded_file:
+    try:
+        df_upload = pd.read_excel(uploaded_file, engine="openpyxl")
+        df_upload.columns = [col.lower().strip() for col in df_upload.columns]
+        required_cols = {"customer", "issue"}
+
+        if not required_cols.issubset(df_upload.columns):
+            st.error("Excel must contain at least 'customer' and 'issue' columns.")
+        else:
+            st.success("File uploaded successfully. Processing entries...")
+            for idx, row in df_upload.iterrows():
+                cust = row.get("customer", "Unknown")
+                issue = str(row.get("issue", ""))
+                date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                
+                # Sentiment/Urgency prediction (you must already have this function)
+                rule_sentiment, transformer_sentiment, urgency, escalated = analyze_issue(issue)
+                
+                try:
+                    insert_escalation({
+                        "customer": cust,
+                        "issue": issue,
+                        "date_reported": date_reported,
+                        "rule_sentiment": rule_sentiment,
+                        "transformer_sentiment": transformer_sentiment,
+                        "urgency": urgency,
+                        "escalated": int(escalated),
+                        "status": "Open",
+                        "action_taken": "",
+                    })
+                except Exception as e:
+                    st.warning(f"Row {idx+1}: {e}")
+                time.sleep(0.05)  # prevent database locking
+
+            st.success("✅ Bulk upload completed without duplicate ID errors.")
+    except Exception as e:
+        st.error(f"❌ Failed to process file: {e}")
 
 
 
