@@ -11,7 +11,7 @@
 # • Filters by urgency, sentiment, date, escalation status
 # • Kanban board with Status, Owner, Action Status editable per case
 # --------------------------------------------------------------
-# Author: Naveen Gandham • v1.6.0 • August 2025
+# Author: Naveen Gandham • v1.6.1 • August 2025
 # ==============================================================
 
 import os
@@ -348,16 +348,23 @@ else:
                         )
 
                         if st.button("Update", key=f"update_{row['id']}"):
-                            with sqlite3.connect(DB_PATH) as conn:
-                                conn.execute(
-                                    """
-                                    UPDATE escalations SET owner=?, action_status=?, status=? WHERE id=?
-                                    """,
-                                    (new_owner, new_action_status, new_status, row['id'])
-                                )
-                                conn.commit()
-                            st.success(f"Updated escalation {row['id']}!")
-                            st.experimental_rerun()
+                            try:
+                                with sqlite3.connect(DB_PATH) as conn:
+                                    conn.execute(
+                                        """
+                                        UPDATE escalations SET owner=?, action_status=?, status=? WHERE id=?
+                                        """,
+                                        (new_owner, new_action_status, new_status, row['id'])
+                                    )
+                                    conn.commit()
+                                st.success(f"Updated escalation {row['id']}!")
+                                st.session_state['needs_refresh'] = True
+                            except Exception as e:
+                                st.error(f"Failed to update escalation: {e}")
+
+if st.session_state.get('needs_refresh'):
+    st.session_state['needs_refresh'] = False
+    st.experimental_rerun()
 
 # ----------------------- Manual Parser -----------------------
 with st.expander("✍️ Manually Parse Email"):
