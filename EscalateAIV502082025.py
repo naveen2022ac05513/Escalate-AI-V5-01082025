@@ -2,109 +2,96 @@ import streamlit as st
 import imaplib
 import email
 from email.header import decode_header
+import datetime
 import pandas as pd
 import sqlite3
-import datetime
 import os
 import re
 from dotenv import load_dotenv
-from textblob import TextBlob  # For sentiment analysis
+from textblob import TextBlob
+import time
 
-# Load environment variables for Gmail credentials
+# Load env vars
 load_dotenv()
 
-GMAIL_USER = os.getenv("EMAIL_USER")
-GMAIL_APP_PASSWORD = os.getenv("EMAIL_PASS")
-IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
+EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_PASS = os.getenv("EMAIL_PASS")
+EMAIL_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
 
-DB_FILE = "escalations.db"
+# DB setup
+conn = sqlite3.connect("escalateai.db", check_same_thread=False)
+cursor = conn.cursor()
 
-# Status options for Kanban
-STATUS_OPTIONS = ["Open", "In Progress", "Resolved"]
-ESCALATION_FILTERS = ["All", "Escalated"]
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS escalations (
+    escalation_id TEXT PRIMARY KEY,
+    customer TEXT,
+    issue TEXT,
+    date TEXT,
+    status TEXT,
+    sentiment TEXT,
+    priority TEXT,
+    action_taken TEXT,
+    action_owner TEXT
+)
+''')
+conn.commit()
 
-# Colors for Kanban styling
-status_colors = {
-    "Open": "#FFDDDD",
-    "In Progress": "#FFF0B3",
-    "Resolved": "#DDFFDD"
-}
-sentiment_colors = {
-    "Positive": "🟢",
-    "Negative": "🔴",
-    "Neutral": "🟡"
-}
-priority_colors = {
-    "High": "🔥",
-    "Low": "⚪"
-}
+# Sentiment & priority helpers
+def analyze_sentiment(text):
+    blob = TextBlob(text)
+    polarity = blob.sentiment.polarity
+    if polarity > 0.2:
+        return "Positive"
+    elif polarity < -0.2:
+        return "Negative"
+    else:
+        return "Neutral"
 
-# Initialize DB
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS escalations (
-            escalation_id TEXT PRIMARY KEY,
-            customer TEXT,
-            issue TEXT,
-            date TEXT,
-            status TEXT,
-            sentiment TEXT,
-            priority TEXT,
-            action_taken TEXT,
-            action_owner TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+def determine_priority(text):
+    urgent_words = ['urgent', 'immediately', 'critical', 'fail', 'escalate', 'problem', 'complaint', 'down', 'error', 'fail']
+    score = sum([text.lower().count(word) for word in urgent_words])
+    if score >= 2:
+        return "High"
+    elif score == 1:
+        return "Medium"
+    else:
+        return "Low"
 
-# Generate next escalation ID
-def get_next_escalation_id():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
+# Generate unique escalation id
+def generate_escalation_id():
     cursor.execute("SELECT COUNT(*) FROM escalations")
     count = cursor.fetchone()[0] + 250001
-    conn.close()
     return f"SESICE-{count}"
 
-# Connect to Gmail and fetch unread emails (limit last 10)
-def fetch_gmail_emails():
-    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
-        st.error("Gmail credentials missing in .env file!")
-        return []
-
+# Fetch unseen emails from Gmail
+def fetch_emails():
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        mail.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        mail = imaplib.IMAP4_SSL(EMAIL_SERVER)
+        mail.login(EMAIL_USER, EMAIL_PASS)
         mail.select("inbox")
-        result, data = mail.search(None, 'UNSEEN')
-        if result != "OK":
+        status, messages = mail.search(None, '(UNSEEN)')
+        if status != "OK":
             return []
-
-        email_ids = data[0].split()
-        emails = []
-
-        # Fetch max 10 unread emails
+        email_ids = messages[0].split()
+        fetched = []
+        # Fetch last 10 unseen
         for num in email_ids[-10:]:
-            res, msg_data = mail.fetch(num, "(RFC822)")
-            if res != "OK":
-                continue
+            _, msg_data = mail.fetch(num, "(RFC822)")
             msg = email.message_from_bytes(msg_data[0][1])
-
             # Decode subject
-            subject, encoding = decode_header(msg.get("Subject"))[0]
+            subject, encoding = decode_header(msg["Subject"])[0]
             if isinstance(subject, bytes):
-                subject = subject.decode(encoding or "utf-8", errors="ignore")
-
+                subject = subject.decode(encoding or "utf-8", errors='ignore')
             from_ = msg.get("From")
-            date_ = msg.get("Date")
-
-            # Extract plain text body
+            date = msg.get("Date")
+            # Get body text
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
-                    if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition")):
+                    ctype = part.get_content_type()
+                    cdisp = str(part.get("Content-Disposition"))
+                    if ctype == "text/plain" and "attachment" not in cdisp:
                         try:
                             body = part.get_payload(decode=True).decode()
                         except:
@@ -115,200 +102,232 @@ def fetch_gmail_emails():
                     body = msg.get_payload(decode=True).decode()
                 except:
                     body = ""
-
-            emails.append({
-                "customer": from_,
-                "issue": body.strip(),
-                "date": date_,
-                "subject": subject
-            })
-
-            # Mark as read
+            # Mark as seen
             mail.store(num, '+FLAGS', '\\Seen')
-
+            fetched.append({
+                "from": from_,
+                "subject": subject,
+                "body": body,
+                "date": date
+            })
         mail.logout()
-        return emails
+        return fetched
     except Exception as e:
         st.error(f"Error fetching emails: {e}")
         return []
 
-# Simple NLP sentiment and priority detection
-def analyze_text(text):
-    # Sentiment polarity: -1 to +1
-    blob = TextBlob(text)
-    polarity = blob.sentiment.polarity
-    if polarity > 0.1:
-        sentiment = "Positive"
-    elif polarity < -0.1:
-        sentiment = "Negative"
-    else:
-        sentiment = "Neutral"
-
-    # Urgency keywords
-    urgency_keywords = ['urgent', 'immediately', 'critical', 'fail', 'escalate', 'issue', 'problem', 'complaint', 'down', 'error']
-    priority_count = sum(text.lower().count(word) for word in urgency_keywords)
-    priority = "High" if priority_count >= 2 else "Low"
-
-    return sentiment, priority
-
-# Insert escalations into DB avoiding duplicates
-def log_escalations(escalations):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    added = 0
-    for esc in escalations:
-        # Avoid duplicate by customer + issue (simple check)
-        cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (esc['customer'], esc['issue'][:500]))
+# Insert escalations avoiding duplicates
+def log_escalations(fetched_emails):
+    new_logs = 0
+    for email_data in fetched_emails:
+        customer = email_data['from']
+        issue = email_data['body'][:500]  # limit size
+        date = email_data['date']
+        cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (customer, issue))
         if cursor.fetchone():
             continue
-
-        sentiment, priority = analyze_text(esc['issue'])
-        esc_id = get_next_escalation_id()
-
-        cursor.execute("""
+        sentiment = analyze_sentiment(issue)
+        priority = determine_priority(issue)
+        escalation_id = generate_escalation_id()
+        cursor.execute('''
             INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, action_taken, action_owner)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (esc_id, esc['customer'], esc['issue'][:500], esc['date'], "Open", sentiment, priority, "", ""))
+        ''', (escalation_id, customer, issue, date, "Open", sentiment, priority, "", ""))
+        conn.commit()
+        new_logs += 1
+    if new_logs > 0:
+        st.success(f"{new_logs} new escalations logged.")
+    else:
+        st.info("No new escalations to log.")
 
-        added += 1
-    conn.commit()
-    conn.close()
-    return added
-
-# Load escalations from DB with optional filters
-def load_escalations(status_filter=None, escalated_filter=None):
-    conn = sqlite3.connect(DB_FILE)
+# Read escalations from DB
+def get_escalations(filter_status=None, filter_priority=None):
     query = "SELECT * FROM escalations"
     params = []
-    conditions = []
-    if status_filter and status_filter != "All":
-        conditions.append("status=?")
-        params.append(status_filter)
-    if escalated_filter == "Escalated":
-        conditions.append("sentiment='Negative'")
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
+    if filter_status and filter_status != "All":
+        query += " WHERE status=?"
+        params.append(filter_status)
+    if filter_priority and filter_priority != "All":
+        if "WHERE" in query:
+            query += " AND priority=?"
+        else:
+            query += " WHERE priority=?"
+        params.append(filter_priority)
+    cursor.execute(query, tuple(params))
+    rows = cursor.fetchall()
+    df = pd.DataFrame(rows, columns=[desc[0] for desc in cursor.description])
     return df
 
-# Update escalation entry in DB
-def update_escalation(esc_id, status, action_taken, action_owner):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE escalations SET status=?, action_taken=?, action_owner=? WHERE escalation_id=?
-    """, (status, action_taken, action_owner, esc_id))
+# Update escalation fields
+def update_escalation(esc_id, status=None, action_taken=None, action_owner=None):
+    updates = []
+    params = []
+    if status is not None:
+        updates.append("status=?")
+        params.append(status)
+    if action_taken is not None:
+        updates.append("action_taken=?")
+        params.append(action_taken)
+    if action_owner is not None:
+        updates.append("action_owner=?")
+        params.append(action_owner)
+    if not updates:
+        return
+    params.append(esc_id)
+    query = f"UPDATE escalations SET {', '.join(updates)} WHERE escalation_id=?"
+    cursor.execute(query, tuple(params))
     conn.commit()
-    conn.close()
 
-# Sidebar for manual entry and Excel upload
-def sidebar_controls():
-    st.sidebar.header("Add / Upload Escalations")
+# Save escalations to Excel for download
+def save_escalations_to_excel(df):
+    filename = f"escalations_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    df.to_excel(filename, index=False)
+    return filename
 
-    with st.sidebar.expander("Manual Entry"):
-        customer = st.text_input("Customer Email / Name")
-        issue = st.text_area("Issue Description")
-        date = st.date_input("Date", datetime.date.today())
-        if st.button("Add Escalation"):
-            if not customer or not issue:
-                st.warning("Please enter customer and issue details.")
-            else:
-                esc = {
-                    "customer": customer,
-                    "issue": issue,
-                    "date": date.strftime("%a, %d %b %Y %H:%M:%S"),
-                }
-                added = log_escalations([esc])
-                if added:
-                    st.success("Manual escalation added!")
-                else:
-                    st.info("Escalation may already exist.")
+# Analyze uploaded Excel for escalations
+def analyze_excel(df):
+    # Expect columns: customer, issue, date (or similar)
+    required_cols = ['customer', 'issue']
+    if not all(col in df.columns for col in required_cols):
+        st.error(f"Uploaded file must have columns: {required_cols}")
+        return 0
+    new_logs = 0
+    for _, row in df.iterrows():
+        customer = str(row['customer'])
+        issue = str(row['issue'])[:500]
+        date = str(row['date']) if 'date' in df.columns else datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S")
+        cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (customer, issue))
+        if cursor.fetchone():
+            continue
+        sentiment = analyze_sentiment(issue)
+        priority = determine_priority(issue)
+        escalation_id = generate_escalation_id()
+        cursor.execute('''
+            INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, action_taken, action_owner)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (escalation_id, customer, issue, date, "Open", sentiment, priority, "", ""))
+        conn.commit()
+        new_logs += 1
+    if new_logs > 0:
+        st.success(f"{new_logs} escalations added from Excel.")
+    else:
+        st.info("No new escalations found in Excel.")
+    return new_logs
 
-    with st.sidebar.expander("Upload Excel File"):
-        uploaded_file = st.file_uploader("Upload Escalations Excel (.xlsx)", type=["xlsx"])
-        if uploaded_file:
-            try:
-                df = pd.read_excel(uploaded_file)
-                # Expect columns: customer, issue, date (case insensitive)
-                required_cols = ["customer", "issue", "date"]
-                lower_cols = [c.lower() for c in df.columns]
-                if all(rc in lower_cols for rc in required_cols):
-                    df.columns = lower_cols  # normalize
-                    escalations = df[required_cols].to_dict(orient="records")
-                    added = log_escalations(escalations)
-                    st.success(f"{added} escalations added from uploaded file.")
-                else:
-                    st.error(f"Uploaded file must contain columns: {required_cols}")
-            except Exception as e:
-                st.error(f"Error reading file: {e}")
+# Manual entry
+def manual_entry():
+    st.sidebar.subheader("Add Manual Escalation")
+    customer = st.sidebar.text_input("Customer Email/Name")
+    issue = st.sidebar.text_area("Issue Description")
+    date = st.sidebar.text_input("Date (leave blank for now)", datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S"))
+    if st.sidebar.button("Add Escalation"):
+        if not customer or not issue:
+            st.sidebar.error("Please enter Customer and Issue.")
+            return
+        sentiment = analyze_sentiment(issue)
+        priority = determine_priority(issue)
+        escalation_id = generate_escalation_id()
+        cursor.execute('''
+            INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, action_taken, action_owner)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (escalation_id, customer, issue, date, "Open", sentiment, priority, "", ""))
+        conn.commit()
+        st.sidebar.success(f"Escalation {escalation_id} added manually.")
 
-# Render Kanban Board
+# Main Kanban colors
+sentiment_colors = {
+    "Positive": "🟢",
+    "Neutral": "🟡",
+    "Negative": "🔴"
+}
+priority_colors = {
+    "High": "🔥",
+    "Medium": "⚠️",
+    "Low": "ℹ️"
+}
+status_colors = {
+    "Open": "🔵",
+    "In Progress": "🟠",
+    "Resolved": "✅"
+}
+
 def render_kanban():
-    st.header("🚀 EscalateAI - Escalations Kanban Board")
+    st.header("🚀 Escalations Kanban Board")
 
-    # Filters
-    col1, col2 = st.columns(2)
-    with col1:
-        status_filter = st.selectbox("Filter by Status", options=["All"] + STATUS_OPTIONS)
-    with col2:
-        escalated_filter = st.selectbox("Filter by Escalation", options=ESCALATION_FILTERS)
+    filter_status = st.selectbox("Filter by Status", options=["All", "Open", "In Progress", "Resolved"])
+    filter_priority = st.selectbox("Filter by Priority", options=["All", "High", "Medium", "Low"])
+    filter_escalated = st.selectbox("Filter Escalated or All", options=["All", "Escalated Only"])
 
-    df = load_escalations(status_filter, escalated_filter)
+    df = get_escalations(filter_status if filter_status != "All" else None,
+                         filter_priority if filter_priority != "All" else None)
     if df.empty:
-        st.info("No escalations found.")
+        st.info("No escalations to display.")
         return
 
-    # Allow downloading escalations as Excel
-    def to_excel(df):
-        output = pd.ExcelWriter("escalations_export.xlsx", engine='xlsxwriter')
-        df.to_excel(output, index=False, sheet_name='Escalations')
-        output.save()
-        return "escalations_export.xlsx"
+    if filter_escalated == "Escalated Only":
+        df = df[df['priority'].isin(['High','Medium'])]
 
-    st.download_button("⬇️ Download Escalations Excel", data=df.to_csv(index=False), file_name="escalations.csv", mime="text/csv")
+    # Columns for Kanban
+    kanban_cols = st.columns(3)
+    statuses = ["Open", "In Progress", "Resolved"]
 
-    # Display Kanban columns
-    cols = st.columns(len(STATUS_OPTIONS))
-
-    for idx, status in enumerate(STATUS_OPTIONS):
-        with cols[idx]:
-            st.subheader(f"{status} ({len(df[df['status'] == status])})")
-            subset = df[df['status'] == status]
-
-            for _, row in subset.iterrows():
-                header = f"{row['escalation_id']} - {sentiment_colors.get(row['sentiment'],'')} {row['sentiment']} / {priority_colors.get(row['priority'],'')} {row['priority']}"
-                with st.expander(header):
+    for i, status in enumerate(statuses):
+        with kanban_cols[i]:
+            st.markdown(f"### {status_colors[status]} {status} ({len(df[df['status'] == status])})")
+            filtered_df = df[df['status'] == status]
+            for idx, row in filtered_df.iterrows():
+                esc_id = row['escalation_id']
+                header = f"{esc_id} - {sentiment_colors.get(row['sentiment'], '')} {row['sentiment']} / {priority_colors.get(row['priority'], '')} {row['priority']}"
+                with st.expander(header, expanded=False):
                     st.write(f"**Customer:** {row['customer']}")
-                    st.write(f"**Issue:** {row['issue']}")
                     st.write(f"**Date:** {row['date']}")
-                    # Editable fields
-                    new_status = st.selectbox("Update Status", STATUS_OPTIONS, index=STATUS_OPTIONS.index(row['status']), key=f"status_{row['escalation_id']}")
-                    new_action_taken = st.text_area("Action Taken", value=row['action_taken'] or "", key=f"action_{row['escalation_id']}")
-                    new_action_owner = st.text_input("Action Owner", value=row['action_owner'] or "", key=f"owner_{row['escalation_id']}")
+                    st.write(f"**Issue:** {row['issue']}")
+                    new_status = st.selectbox("Update Status", options=statuses, index=statuses.index(row['status']), key=f"status_{esc_id}")
+                    new_action_taken = st.text_area("Action Taken", value=row['action_taken'], key=f"action_{esc_id}")
+                    new_action_owner = st.text_input("Action Owner", value=row['action_owner'], key=f"owner_{esc_id}")
 
-                    # Update DB on change
-                    if (new_status != row['status'] or new_action_taken != (row['action_taken'] or "") or new_action_owner != (row['action_owner'] or "")):
-                        update_escalation(row['escalation_id'], new_status, new_action_taken, new_action_owner)
-                        st.success("Updated escalation details.")
+                    if (new_status != row['status'] or new_action_taken != row['action_taken'] or new_action_owner != row['action_owner']):
+                        update_escalation(esc_id, new_status, new_action_taken, new_action_owner)
+                        st.success("Updated escalation.")
 
-# Main app
+    # Download Excel
+    if st.button("📥 Download All Escalations as Excel"):
+        filename = save_escalations_to_excel(df)
+        with open(filename, "rb") as f:
+            st.download_button("Download Excel File", f, file_name=filename, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+def upload_excel():
+    st.sidebar.subheader("Upload Escalations Excel")
+    uploaded_file = st.sidebar.file_uploader("Upload Excel file with columns: customer, issue, [date]", type=["xlsx"])
+    if uploaded_file:
+        df = pd.read_excel(uploaded_file)
+        analyze_excel(df)
+
+def periodic_email_fetch():
+    if st.button("🔄 Fetch New Emails Now"):
+        fetched = fetch_emails()
+        if fetched:
+            log_escalations(fetched)
+
+    # Automatic fetch every 60 seconds with info
+    if "last_fetch" not in st.session_state:
+        st.session_state.last_fetch = 0
+
+    now = time.time()
+    if now - st.session_state.last_fetch > 60:
+        fetched = fetch_emails()
+        if fetched:
+            log_escalations(fetched)
+        st.session_state.last_fetch = now
+        st.info(f"Emails auto-fetched at {datetime.datetime.now().strftime('%H:%M:%S')}")
+
 def main():
-    st.title("EscalateAI - Automated Escalation Management")
-    init_db()
+    st.set_page_config(page_title="EscalateAI", layout="wide")
+    st.title("🚀 EscalateAI - Customer Escalation Management")
 
-    # Fetch new emails every minute (user can press button)
-    if st.button("🔄 Fetch new emails from Gmail"):
-        with st.spinner("Fetching emails..."):
-            emails = fetch_gmail_emails()
-            if emails:
-                added = log_escalations(emails)
-                st.success(f"Fetched {len(emails)} emails, added {added} new escalations.")
-            else:
-                st.info("No new emails fetched.")
-
-    sidebar_controls()
+    manual_entry()
+    upload_excel()
+    periodic_email_fetch()
     render_kanban()
 
 if __name__ == "__main__":
