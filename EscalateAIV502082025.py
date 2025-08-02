@@ -144,43 +144,47 @@ def analyze_and_log_emails(fetched_emails):
     conn.commit()
     conn.close()
 
+# The error is caused by referencing keys in the DataFrame row that might not exist.
+# Let's add debugging and fallback to avoid KeyError during rendering.
+
 def render_kanban():
     conn = sqlite3.connect("escalations.db")
     df = pd.read_sql_query("SELECT * FROM escalations", conn)
     conn.close()
 
-    st.header("🚀 EscalateAI - Escalation Management with Auto Escalation & Email Alerts")
-    st.subheader("Escalations Kanban Board")
-
     statuses = ["Open", "In Progress", "Resolved"]
+    st.subheader("📋 Escalation Kanban Board")
+    
     cols = st.columns(len(statuses))
+    for idx, status in enumerate(statuses):
+        with cols[idx]:
+            st.markdown(f"**{status}**")
+            filtered = df[df["status"] == status]
+            for _, row in filtered.iterrows():
+                escalation_id = row.get("escalation_id", "UNKNOWN")
+                sentiment = row.get("sentiment", "Unknown")
+                priority = row.get("priority", "Unknown")
+                customer = row.get("customer", "")
+                issue = row.get("issue", "")
+                date = row.get("date", "")
+                
+                with st.expander(f"{escalation_id} - {sentiment}/{priority}"):
+                    st.write(f"**Customer:** {customer}")
+                    st.write(f"**Issue:** {issue}")
+                    st.write(f"**Date:** {date}")
 
-    for i, status in enumerate(statuses):
-        with cols[i]:
-            st.markdown(f"### {status} ({df[df['status']==status].shape[0]})")
-            for _, row in df[df['status'] == status].iterrows():
-                with st.expander(f"{row['escalation_id']} - {row['sentiment']}/{row['priority']}"):
-                    st.markdown(f"**Customer:** {row['customer']}")
-                    st.markdown(f"**Issue:** {row['issue'][:300]}...")
-                    st.markdown(f"**Date:** {row['date']}")
-                    new_status = st.selectbox("Update Status", statuses, index=statuses.index(row['status']), key=f"status_{row['escalation_id']}")
-                    new_action = st.text_input("Action Taken", value=row['action_taken'], key=f"action_{row['escalation_id']}")
-                    if st.button("💾 Save", key=f"save_{row['escalation_id']}"):
+                    new_status = st.selectbox("Update Status", statuses, index=statuses.index(status), key=f"status_{escalation_id}")
+                    action_taken = st.text_area("Action Taken", key=f"action_{escalation_id}")
+
+                    if st.button("Update", key=f"update_{escalation_id}"):
                         conn = sqlite3.connect("escalations.db")
                         cursor = conn.cursor()
-                        cursor.execute("UPDATE escalations SET status=?, action_taken=? WHERE escalation_id=?", (new_status, new_action, row['escalation_id']))
+                        cursor.execute("""
+                            UPDATE escalations
+                            SET status = ?, action_taken = ?
+                            WHERE escalation_id = ?
+                        """, (new_status, action_taken, escalation_id))
                         conn.commit()
                         conn.close()
-                        st.success("✅ Updated")
-
-st.set_page_config(page_title="EscalateAI", layout="wide")
-st.title("📬 Gmail Escalation Fetcher")
-
-if st.button("🔄 Fetch Emails"):
-    emails = connect_and_fetch_emails()
-    if emails:
-        analyze_and_log_emails(emails)
-        st.success(f"✅ {len(emails)} emails analyzed and logged.")
-        st.dataframe(pd.DataFrame(emails))
-
-render_kanban()
+                        st.success("Escalation updated successfully.")
+                        st.experimental_rerun()
