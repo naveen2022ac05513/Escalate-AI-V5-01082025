@@ -1,264 +1,93 @@
-# ==============================================================
-# EscalateAI – Escalation Management Tool with Email Parsing & Time-Based Escalation & Alerts
-# --------------------------------------------------------------
-# Author: Naveen Gandham • v1.9.0 • August 2025
-# ==============================================================
-
 import os
 import re
 import sqlite3
 import email
 from email.mime.text import MIMEText
-from email.message import EmailMessage
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Tuple
 import time
 import smtplib
+import logging
 
-import pandas as pd
 import streamlit as st
+import pandas as pd
 from dotenv import load_dotenv
 from imapclient import IMAPClient
 from bs4 import BeautifulSoup
 from apscheduler.schedulers.background import BackgroundScheduler
-import logging
-
 from transformers import pipeline
-import imaplib
-import email
-from email.header import decode_header
-import os
-from dotenv import load_dotenv
 
-import streamlit as st
-import imaplib
-import email
-from email.header import decode_header
-import datetime
-import pandas as pd
-import sqlite3
-import re
-import os
-from dotenv import load_dotenv
-
+# Load environment variables
 load_dotenv()
 
-EMAIL = os.getenv("GMAIL_USER") or st.text_input("Enter your Gmail address", key="email_input")
-APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD") or st.text_input("Enter your Gmail App Password", type="password", key="app_pass_input")
+EMAIL = os.getenv("GMAIL_USER") or os.getenv("EMAIL_USER")
+APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD") or os.getenv("EMAIL_PASS")
+IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
+ALERT_RECEIVER = os.getenv("ALERT_RECEIVER") or EMAIL
 
-def connect_and_fetch_emails():
-    if not EMAIL or not APP_PASSWORD:
-        st.warning("🔐 Please provide your Gmail and App Password.", key="warn_gmail_credentials")
-        return []
+if not EMAIL or not APP_PASSWORD:
+    st.error("⚠️ Gmail credentials not found in .env file. Please add GMAIL_USER and GMAIL_APP_PASSWORD.")
+    st.stop()
 
-    try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(EMAIL, APP_PASSWORD)
-        st.success("📡 Connected to Gmail.", key="success_gmail_connection")
-    except imaplib.IMAP4.error as e:
-        st.error(f"❌ Gmail login failed: {str(e)}", key="error_gmail_login")
-        return []
-
-    status, messages = mail.select("inbox")
-    if status != 'OK':
-        st.error("❌ Could not select the inbox.", key="error_select_inbox")
-        return []
-
-    result, data = mail.search(None, '(UNSEEN)')
-    st.write("🔍 Search result:", result, key="search_result")
-    st.write("📬 Raw data from search:", data, key="raw_data_search")
-
-    if result != 'OK':
-        st.info("📭 No unread emails found.", key="info_no_unread")
-        return []
-
-    email_ids = data[0].split()
-    st.write(f"📧 Found {len(email_ids)} unread emails.", key="found_unread_count")
-    fetched_emails = []
-
-    for num in email_ids[-10:]:
-        result, msg_data = mail.fetch(num, '(RFC822)')
-        if result != 'OK':
-            continue
-        msg = email.message_from_bytes(msg_data[0][1])
-
-        subject, encoding = decode_header(msg["Subject"])[0]
-        if isinstance(subject, bytes):
-            subject = subject.decode(encoding or 'utf-8', errors='ignore')
-
-        from_ = msg.get("From")
-        date = msg.get("Date")
-
-        body = ""
-        if msg.is_multipart():
-            for part in msg.walk():
-                content_type = part.get_content_type()
-                content_disposition = str(part.get("Content-Disposition"))
-                if content_type == "text/plain" and "attachment" not in content_disposition:
-                    try:
-                        body = part.get_payload(decode=True).decode()
-                    except:
-                        pass
-                    break
-        else:
-            try:
-                body = msg.get_payload(decode=True).decode()
-            except:
-                pass
-
-        fetched_emails.append({
-            "from": from_,
-            "subject": subject,
-            "body": body,
-            "date": date
-        })
-
-        mail.store(num, '+FLAGS', '\\Seen')
-
-    mail.logout()
-    return fetched_emails
-
-def analyze_and_log_emails(fetched_emails):
-    conn = sqlite3.connect("escalations.db")
-    cursor = conn.cursor()
-
-    for email_data in fetched_emails:
-        from_email = email_data['from']
-        subject = email_data['subject']
-        body = email_data['body']
-        date = email_data['date']
-
-        cursor.execute("SELECT COUNT(*) FROM escalations WHERE customer=? AND issue=?", (from_email, body))
-        if cursor.fetchone()[0] > 0:
-            continue
-
-        urgency_keywords = ['urgent', 'immediately', 'critical', 'fail', 'escalate', 'issue', 'problem', 'complaint']
-        sentiment_score = sum(1 for word in urgency_keywords if word in body.lower())
-        sentiment = "Negative" if sentiment_score > 0 else "Positive"
-        priority = "High" if sentiment_score >= 2 else "Low"
-
-        cursor.execute("SELECT COUNT(*) FROM escalations")
-        count = cursor.fetchone()[0] + 250001
-        escalation_id = f"SESICE-{count}"
-
-        cursor.execute("""
-            INSERT INTO escalations (id, customer, issue, date_reported, rule_sentiment, transformer_sentiment, urgency, escalated, status, owner, action_status, last_updated, escalation_level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            escalation_id, from_email, body[:500], date, sentiment, sentiment, priority, 1, "Open", "", "Pending", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 1
-        ))
-
-    conn.commit()
-    conn.close()
-
-st.header("📬 Gmail Escalation Fetcher")
-
-if st.button("🔄 Fetch Emails", key="fetch_emails_button"):
-    emails = connect_and_fetch_emails()
-    if emails:
-        analyze_and_log_emails(emails)
-        st.success(f"✅ {len(emails)} emails analyzed and logged if valid.", key="success_email_logged")
-        st.dataframe(pd.DataFrame(emails), key="email_dataframe")
-    else:
-        st.info("📪 No new emails or error in fetching.", key="info_no_emails")
-
-# --- Add unique keys to all other widgets in your full app similarly ---
-
-# Streamlit UI
-st.header("📬 Gmail Escalation Fetcher")
-if st.button("🔄 Fetch Emails"):
-    emails = connect_and_fetch_emails()
-    if emails:
-        st.success(f"✅ {len(emails)} new emails fetched.")
-        st.dataframe(pd.DataFrame(emails))
-    else:
-        st.warning("📪 No new unread emails or error in fetching.")
-
-
-# ----------------------- Paths & ENV -----------------------
-APP_DIR = Path(__file__).resolve().parent
+# Paths & DB
+APP_DIR = Path(__file__).parent
 DATA_DIR = APP_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "escalateai.db"
 
-load_dotenv()
-IMAP_USER = os.getenv("EMAIL_USER")
-IMAP_PASS = os.getenv("EMAIL_PASS")
-IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
-ALERT_RECEIVER = os.getenv("ALERT_RECEIVER", IMAP_USER)
-
-# SMTP email alert config (adjust as needed)
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
-SMTP_USERNAME = os.getenv("SMTP_USERNAME", IMAP_USER)
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", IMAP_PASS)
-FROM_EMAIL = SMTP_USERNAME
-
-# ----------------------- Logging -----------------------
-LOG_DIR = APP_DIR / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+# Logging
+log_dir = APP_DIR / "logs"
+log_dir.mkdir(exist_ok=True)
 logging.basicConfig(
-    filename=LOG_DIR / "escalateai.log",
+    filename=log_dir / "escalateai.log",
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# ----------------------- Database Initialization & Migration -----------------------
+# Database Init
 def initialize_db():
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS escalations (
-                id TEXT PRIMARY KEY,
-                customer TEXT,
-                issue TEXT,
-                date_reported TEXT,
-                rule_sentiment TEXT,
-                transformer_sentiment TEXT,
-                urgency TEXT,
-                escalated INTEGER,
-                status TEXT DEFAULT 'Open',
-                owner TEXT DEFAULT '',
-                action_status TEXT DEFAULT 'Pending',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                last_updated TEXT,
-                escalation_level INTEGER DEFAULT 1
-            )
-            """
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS escalations (
+            id TEXT PRIMARY KEY,
+            customer TEXT,
+            issue TEXT,
+            date_reported TEXT,
+            rule_sentiment TEXT,
+            transformer_sentiment TEXT,
+            urgency TEXT,
+            escalated INTEGER,
+            status TEXT DEFAULT 'Open',
+            owner TEXT DEFAULT '',
+            action_status TEXT DEFAULT 'Pending',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_updated TEXT,
+            escalation_level INTEGER DEFAULT 1
         )
-        # Migration: add columns if missing
-        cursor = conn.execute("PRAGMA table_info(escalations)")
-        columns = [col[1] for col in cursor.fetchall()]
-        if "last_updated" not in columns:
-            conn.execute("ALTER TABLE escalations ADD COLUMN last_updated TEXT")
-        if "escalation_level" not in columns:
-            conn.execute("ALTER TABLE escalations ADD COLUMN escalation_level INTEGER DEFAULT 1")
-        if "owner" not in columns:
-            conn.execute("ALTER TABLE escalations ADD COLUMN owner TEXT DEFAULT ''")
-        if "action_status" not in columns:
-            conn.execute("ALTER TABLE escalations ADD COLUMN action_status TEXT DEFAULT 'Pending'")
+        """)
         conn.commit()
 
 initialize_db()
 
-# ----------------------- Sentiment & Keyword Lists -----------------------
-NEG_WORDS = sorted(set([
+# Negative Words for rule-based sentiment
+NEG_WORDS = set([
     # Technical Failures & Product Malfunction
-    "fail", "break", "crash", "defect", "fault", "degrade",
-    "damage", "trip", "malfunction", "blank", "shutdown", "discharge",
+    "fail", "break", "crash", "defect", "fault", "degrade", "damage", "trip",
+    "malfunction", "blank", "shutdown", "discharge",
     # Customer Dissatisfaction & Escalations
-    "dissatisfy", "frustrate", "complain", "reject", "delay",
-    "ignore", "escalate", "displease", "noncompliance", "neglect",
+    "dissatisfy", "frustrate", "complain", "reject", "delay", "ignore", "escalate",
+    "displease", "noncompliance", "neglect",
     # Support Gaps & Operational Delays
-    "wait", "pending", "slow", "incomplete", "miss", "omit",
-    "unresolved", "shortage", "no response",
+    "wait", "pending", "slow", "incomplete", "miss", "omit", "unresolved",
+    "shortage", "no response",
     # Hazardous Conditions & Safety Risks
-    "fire", "burn", "flashover", "arc", "explode", "unsafe",
-    "leak", "corrode", "alarm", "incident",
+    "fire", "burn", "flashover", "arc", "explode", "unsafe", "leak", "corrode",
+    "alarm", "incident",
     # Business Risk & Impact
-    "impact", "loss", "risk", "downtime", "interrupt", "cancel",
-    "terminate", "penalty"
-]))
+    "impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate",
+    "penalty"
+])
 
 @st.cache_resource(show_spinner=False)
 def load_transformer_model():
@@ -267,54 +96,52 @@ def load_transformer_model():
 transformer_model = load_transformer_model()
 
 def rule_sent(text: str) -> str:
-    return "Negative" if any(re.search(rf"\b{re.escape(word)}\b", text, re.I) for word in NEG_WORDS) else "Positive"
+    return "Negative" if any(word in text.lower() for word in NEG_WORDS) else "Positive"
 
 def transformer_sent(text: str) -> str:
     try:
         result = transformer_model(text[:512])[0]
         return "Negative" if result['label'].upper() == "NEGATIVE" else "Positive"
-    except Exception as e:
-        logging.error(f"Transformer sentiment error: {e}")
+    except Exception:
         return "Positive"
 
-def analyze_issue(text: str):
+def analyze_issue(text: str) -> Tuple[str, str, str, bool]:
     rule = rule_sent(text)
     transformer = transformer_sent(text)
     urgency = "High" if any(k in text.lower() for k in ["urgent", "immediate", "critical", "asap"]) else "Low"
     escalate = (rule == "Negative" or transformer == "Negative") and urgency == "High"
     return rule, transformer, urgency, escalate
 
-# ----------------------- Notification -----------------------
-def send_alert_email(to_email, subject, body):
+def send_alert_email(issue_summary: str):
     try:
-        if not to_email:
-            to_email = ALERT_RECEIVER
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = FROM_EMAIL
-        msg["To"] = to_email
-        msg.set_content(body)
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-        logging.info(f"📧 Alert email sent to {to_email} with subject '{subject}'")
+        msg = MIMEText(issue_summary)
+        msg["Subject"] = "🚨 High-Risk Escalation Detected"
+        msg["From"] = EMAIL
+        msg["To"] = ALERT_RECEIVER
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL, APP_PASSWORD)
+            server.sendmail(EMAIL, ALERT_RECEIVER, msg.as_string())
+        logging.info(f"Alert email sent to {ALERT_RECEIVER}")
     except Exception as e:
-        logging.error(f"❌ Failed to send alert email: {e}")
+        logging.error(f"Failed to send alert email: {e}")
 
-# ----------------------- Insert with Unique ID -----------------------
+def generate_new_id() -> str:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.execute("SELECT MAX(CAST(SUBSTR(id, 7) AS INTEGER)) FROM escalations WHERE id LIKE 'SESICE-%'")
+        max_num = cur.fetchone()[0]
+        if max_num is None or max_num < 250000:
+            next_num = 250001
+        else:
+            next_num = max_num + 1
+        return f"SESICE-{next_num:06d}"
+
 def insert_escalation(data: dict):
     retries = 3
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for attempt in range(retries):
         try:
             with sqlite3.connect(DB_PATH) as conn:
-                cur = conn.execute(
-                    "SELECT MAX(CAST(SUBSTR(id, 7) AS INTEGER)) FROM escalations WHERE id LIKE 'SESICE-%'"
-                )
-                max_num = cur.fetchone()[0]
-                next_num = 250001 if max_num is None or max_num < 250000 else max_num + 1
-                new_id = f"SESICE-{next_num:06d}"
-                data["id"] = new_id
+                data["id"] = generate_new_id()
                 data.setdefault("status", "Open")
                 data.setdefault("owner", "")
                 data.setdefault("action_status", "Pending")
@@ -325,11 +152,8 @@ def insert_escalation(data: dict):
                 placeholders = ",".join(["?"] * len(data))
                 conn.execute(f"INSERT INTO escalations ({cols}) VALUES ({placeholders})", vals)
                 conn.commit()
-            # Alert if escalated
-            if (data["rule_sentiment"] == "Negative" or data["transformer_sentiment"] == "Negative") and data["urgency"] == "High":
+            if data["urgency"] == "High" and (data["rule_sentiment"] == "Negative" or data["transformer_sentiment"] == "Negative"):
                 send_alert_email(
-                    ALERT_RECEIVER,
-                    "🚨 High-Risk Escalation Detected",
                     f"Escalation ID: {data['id']}\nCustomer: {data['customer']}\nIssue: {data['issue'][:200]}"
                 )
             break
@@ -339,14 +163,16 @@ def insert_escalation(data: dict):
             else:
                 raise
 
-# ----------------------- Email Parser (Gmail IMAP) -----------------------
-def parse_emails():
+def fetch_emails():
     parsed_count = 0
     try:
         with IMAPClient(IMAP_SERVER) as client:
-            client.login(IMAP_USER, IMAP_PASS)
+            client.login(EMAIL, APP_PASSWORD)
             client.select_folder("INBOX")
             messages = client.search(["UNSEEN"])
+            if not messages:
+                st.info("📪 No new emails.")
+                return
             for uid, msg_data in client.fetch(messages, ["BODY[]"]).items():
                 raw_email = msg_data[b"BODY[]"]
                 msg = email.message_from_bytes(raw_email)
@@ -361,7 +187,7 @@ def parse_emails():
                             try:
                                 body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
                                 break
-                            except Exception:
+                            except:
                                 continue
                 else:
                     body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
@@ -377,71 +203,46 @@ def parse_emails():
                     "escalated": int(escalate)
                 })
                 parsed_count += 1
-                logging.info(f"🔔 Escalation from {from_email} logged with rule={rule}, transformer={transformer}, urgency={urgency}.")
+                logging.info(f"Escalation from {from_email} logged.")
+            st.success(f"✅ Parsed and logged {parsed_count} new emails.")
     except Exception as e:
-        logging.error(f"❌ Failed to fetch emails: {e}")
-        st.error("❌ Failed to connect to email server. Check credentials or network.")
-    if parsed_count:
-        st.success(f"✅ Parsed and logged {parsed_count} new emails.")
-    else:
-        st.info("No new emails found.")
+        logging.error(f"Failed to fetch emails: {e}")
+        st.error("Failed to fetch emails. Check credentials and network.")
 
-# ----------------------- Time-Based Auto Escalation -----------------------
-AUTO_ESCALATION_HOURS = 72  # 3 days
-
-def auto_escalate_cases():
+def escalate_overdue_cases():
+    threshold_hours = 24
     now = datetime.now()
     with sqlite3.connect(DB_PATH) as conn:
         overdue_cases = conn.execute(
-            """
-            SELECT id, escalation_level, owner, status, last_updated, issue, customer
-            FROM escalations
-            WHERE status != 'Resolved' AND last_updated IS NOT NULL AND escalation_level < 3
-            """
+            "SELECT id, escalation_level, owner, status, last_updated FROM escalations WHERE status != 'Resolved' AND last_updated IS NOT NULL"
         ).fetchall()
+        for case_id, level, owner, status, last_upd in overdue_cases:
+            last_upd_dt = datetime.strptime(last_upd, "%Y-%m-%d %H:%M:%S")
+            if (now - last_upd_dt) > timedelta(hours=threshold_hours):
+                new_level = level + 1
+                new_owner = "manager@example.com" if new_level == 2 else owner
+                conn.execute(
+                    "UPDATE escalations SET escalation_level = ?, owner = ?, last_updated = ? WHERE id = ?",
+                    (new_level, new_owner, now.strftime("%Y-%m-%d %H:%M:%S"), case_id)
+                )
+                conn.commit()
+                send_alert_email(f"Escalation {case_id} escalated to level {new_level}, assigned to {new_owner}.")
+                logging.info(f"Escalation {case_id} auto-escalated.")
 
-        for case_id, level, owner, status, last_upd, issue, customer in overdue_cases:
-            try:
-                last_upd_dt = datetime.strptime(last_upd, "%Y-%m-%d %H:%M:%S")
-                hours_passed = (now - last_upd_dt).total_seconds() / 3600
-                if hours_passed >= AUTO_ESCALATION_HOURS:
-                    new_level = level + 1
-                    new_owner = owner if owner else ALERT_RECEIVER
-                    conn.execute(
-                        """
-                        UPDATE escalations
-                        SET escalation_level = ?, escalated=1, last_updated = ?, owner = ?
-                        WHERE id = ?
-                        """,
-                        (new_level, now.strftime("%Y-%m-%d %H:%M:%S"), new_owner, case_id)
-                    )
-                    conn.commit()
-                    send_alert_email(
-                        new_owner,
-                        f"⚠️ Escalation Level Increased for {case_id}",
-                        f"Escalation {case_id} for customer {customer} has been escalated to level {new_level} due to inactivity.\n\nIssue: {issue}"
-                    )
-                    logging.info(f"Auto-escalated {case_id} to level {new_level}")
-            except Exception as e:
-                logging.error(f"Error in auto escalation for {case_id}: {e}")
-
-# ----------------------- Scheduler -----------------------
+# Scheduler
 scheduler = BackgroundScheduler()
-scheduler.add_job(parse_emails, 'interval', minutes=1, id='email_job', replace_existing=True)
-scheduler.add_job(auto_escalate_cases, 'interval', hours=1, id='auto_escalation', replace_existing=True)
+scheduler.add_job(fetch_emails, 'interval', minutes=1, id='email_fetcher', replace_existing=True)
+scheduler.add_job(escalate_overdue_cases, 'interval', hours=1, id='auto_escalation', replace_existing=True)
 scheduler.start()
 logging.info("Schedulers started")
 
-# ----------------------- Streamlit App -----------------------
+# Streamlit UI
 st.title("🚀 EscalateAI - Escalation Management with Auto Escalation & Email Alerts")
 
-# Sidebar controls
 with st.sidebar:
     st.header("Controls")
-    if st.button("Manually Parse Emails"):
-        with st.spinner("Checking inbox..."):
-            parse_emails()
-
+    if st.button("Fetch Emails Now"):
+        fetch_emails()
     st.markdown("---")
     st.header("Manual Escalation Entry")
     manual_customer = st.text_input("Customer Email")
@@ -460,128 +261,85 @@ with st.sidebar:
             })
             st.success("Escalation added!")
         else:
-            st.error("Please enter both customer email and issue.")
+            st.error("Please enter customer email and issue.")
 
     st.markdown("---")
-
-    st.subheader("📥 Bulk Upload from Excel")
-    uploaded_file = st.file_uploader("Upload Escalation Excel", type=["xlsx"])
+    st.header("Bulk Upload Escalations (Excel)")
+    uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
     if uploaded_file:
         try:
-            df_upload = pd.read_excel(uploaded_file, engine="openpyxl")
-            df_upload.columns = [col.lower().strip() for col in df_upload.columns]
-            required_cols = {"customer", "issue"}
-            if not required_cols.issubset(df_upload.columns):
-                st.error("Excel must contain at least 'customer' and 'issue' columns.")
+            df_upload = pd.read_excel(uploaded_file)
+            df_upload.columns = [c.lower().strip() for c in df_upload.columns]
+            if not {"customer", "issue"}.issubset(df_upload.columns):
+                st.error("Excel must contain 'customer' and 'issue' columns.")
             else:
-                st.success("File uploaded successfully. Processing entries...")
-                for idx, row in df_upload.iterrows():
-                    cust = row.get("customer", "Unknown")
-                    issue = str(row.get("issue", ""))
+                for _, row in df_upload.iterrows():
+                    cust = row["customer"]
+                    issue = str(row["issue"])
                     date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                     rs, ts, urgency, escalated = analyze_issue(issue)
-                    try:
-                        insert_escalation({
-                            "customer": cust,
-                            "issue": issue,
-                            "date_reported": date_reported,
-                            "rule_sentiment": rs,
-                            "transformer_sentiment": ts,
-                            "urgency": urgency,
-                            "escalated": int(escalated),
-                            "status": "Open",
-                            "action_status": "Pending",
-                            "owner": "",
-                            "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "escalation_level": 1 if escalated else 0
-                        })
-                    except Exception as e:
-                        st.warning(f"Row {idx+1}: {e}")
-                    time.sleep(0.05)
-                st.success("✅ Bulk upload completed.")
+                    insert_escalation({
+                        "customer": cust,
+                        "issue": issue,
+                        "date_reported": date_reported,
+                        "rule_sentiment": rs,
+                        "transformer_sentiment": ts,
+                        "urgency": urgency,
+                        "escalated": int(escalated),
+                    })
+                st.success("Bulk upload complete!")
         except Exception as e:
-            st.error(f"Failed to process file: {e}")
+            st.error(f"Failed to process Excel file: {e}")
 
-# Load escalations for dashboard
+# Load and display escalations with filters
 with sqlite3.connect(DB_PATH) as conn:
-    try:
-        df = pd.read_sql("SELECT * FROM escalations ORDER BY created_at DESC", conn)
-    except Exception as e:
-        st.error(f"Database read error: {e}")
-        df = pd.DataFrame()
+    df = pd.read_sql("SELECT * FROM escalations ORDER BY created_at DESC", conn)
 
-# Filters
 st.header("Escalations Kanban Board")
-filter_escalated = st.checkbox("Show Escalated Cases Only", value=False)
-
-if filter_escalated:
-    df = df[df["escalated"] == 1]
 
 statuses = ["Open", "In Progress", "Resolved"]
-STATUS_COLORS = {
+status_colors = {
     "Open": "#ffcccc",
     "In Progress": "#fff0b3",
     "Resolved": "#ccffcc"
 }
 
+# Filter by status and escalated flag
+status_filter = st.multiselect("Filter by Status", options=statuses, default=statuses)
+escalated_filter = st.selectbox("Show Escalations", options=["All", "Only Escalated", "Only Non-Escalated"], index=0)
+
+filtered_df = df[df["status"].isin(status_filter)]
+if escalated_filter == "Only Escalated":
+    filtered_df = filtered_df[filtered_df["escalated"] == 1]
+elif escalated_filter == "Only Non-Escalated":
+    filtered_df = filtered_df[filtered_df["escalated"] == 0]
+
 cols = st.columns(len(statuses))
 
 for col, status in zip(cols, statuses):
-    count = len(df[df["status"] == status]) if not df.empty else 0
+    count = len(filtered_df[filtered_df["status"] == status])
     with col:
-        st.markdown(
-            f"<h3 style='background-color:{STATUS_COLORS[status]};"
-            f"padding:8px;border-radius:6px;text-align:center;'>{status} ({count})</h3>",
-            unsafe_allow_html=True
-        )
-        filtered = df[df["status"] == status] if not df.empty else pd.DataFrame()
-        if filtered.empty:
+        st.markdown(f"<h3 style='background-color:{status_colors[status]};padding:8px;border-radius:6px;text-align:center;'>{status} ({count})</h3>", unsafe_allow_html=True)
+        sub_df = filtered_df[filtered_df["status"] == status]
+        if sub_df.empty:
             st.write("_No escalations_")
         else:
-            for idx, row in filtered.iterrows():
-                with st.expander(f"{row['id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
-                    st.markdown(f"**Issue:** {row['issue']}")
-                    st.markdown(f"**Escalated:** {'Yes' if row.get('escalated', 0) else 'No'}")
-                    st.markdown(f"**Date:** {row['date_reported']}")
-                    st.markdown(f"**Escalation Level:** {row.get('escalation_level', 1)}")
+            for _, row in sub_df.iterrows():
+                with st.expander(f"{row['id']} - {row['customer']} ({row['rule_sentiment']}/{row['urgency']})"):
+                    st.write(f"**Issue:** {row['issue']}")
+                    st.write(f"**Escalated:** {'Yes' if row['escalated'] else 'No'}")
+                    st.write(f"**Date Reported:** {row['date_reported']}")
+                    st.write(f"**Escalation Level:** {row.get('escalation_level', 1)}")
 
-                    new_owner = st.text_input("Owner", value=row.get("owner", ""), key=f"owner_{row['id']}")
-                    new_action_status = st.text_input(
-                        "Action Taken",
-                        value=row.get("action_status", ""),
-                        key=f"action_{row['id']}"
-                    )
-                    new_status = st.selectbox("Status", options=statuses, index=statuses.index(row["status"]), key=f"status_{row['id']}")
+                    owner = st.text_input(f"Owner ({row['id']})", value=row.get("owner", ""), key=f"owner_{row['id']}")
+                    action_status = st.text_input(f"Action Taken ({row['id']})", value=row.get("action_status", ""), key=f"action_{row['id']}")
+                    status_val = st.selectbox(f"Status ({row['id']})", options=statuses, index=statuses.index(row["status"]), key=f"status_{row['id']}")
 
                     if st.button("Update", key=f"update_{row['id']}"):
-                        try:
-                            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            with sqlite3.connect(DB_PATH) as conn:
-                                conn.execute(
-                                    """
-                                    UPDATE escalations
-                                    SET status=?, action_status=?, last_updated=?, owner=?
-                                    WHERE id=?
-                                    """,
-                                    (new_status, new_action_status, now_str, new_owner, row["id"])
-                                )
-                                conn.commit()
-
-                            # Notify owner on assignment
-                            if new_owner:
-                                send_alert_email(
-                                    new_owner,
-                                    f"You have been assigned Escalation {row['id']}",
-                                    f"Hello,\n\nYou have been assigned the escalation case {row['id']}.\n\nIssue:\n{row['issue']}\n\nPlease attend to this promptly."
-                                )
-                            st.success(f"Escalation {row['id']} updated.")
-                            if st.session_state.get('needs_refresh'):
-                               st.session_state['needs_refresh'] = False
-                               st.info("🔄 Please refresh the page to see the updated escalation data.")
-                        except Exception as e:
-                            st.error(f"Update failed: {e}")
-
-# Footer note
-st.markdown("---")
-st.markdown("⚙️ Powered by EscalateAI | Developed by Naveen Gandham")
-
+                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        with sqlite3.connect(DB_PATH) as conn:
+                            conn.execute("UPDATE escalations SET owner=?, action_status=?, status=?, last_updated=? WHERE id=?",
+                                         (owner, action_status, status_val, now_str, row['id']))
+                            conn.commit()
+                        st.success(f"Escalation {row['id']} updated.")
+                        st.experimental_rerun()
