@@ -124,36 +124,53 @@ def send_alert_email(issue_summary):
 
 # ----------------------- Insert with Sequential ID -----------------------
 def insert_escalation(data: dict):
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.execute(
-            "SELECT MAX(CAST(SUBSTR(id, 7) AS INTEGER)) FROM escalations WHERE id LIKE 'SESICE-%'"
-        )
-        max_num = cur.fetchone()[0]
-        if max_num is None or max_num < 250000:
-            next_num = 250001
-        else:
-            next_num = max_num + 1
+    retries = 5
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for attempt in range(retries):
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.execute(
+                    "SELECT MAX(CAST(SUBSTR(id, 7) AS INTEGER)) FROM escalations WHERE id LIKE 'SESICE-%'"
+                )
+                max_num = cur.fetchone()[0]
+                if max_num is None or max_num < 250000:
+                    next_num = 250001
+                else:
+                    next_num = max_num + 1
 
-        new_id = f"SESICE-{next_num:06d}"
-        data["id"] = new_id
+                new_id = f"SESICE-{next_num:06d}"
+                data["id"] = new_id
 
-        # Set defaults if not present
-        data.setdefault("status", "Open")
-        data.setdefault("owner", "")
-        data.setdefault("action_status", "Pending")
+                data.setdefault("status", "Open")
+                data.setdefault("owner", "")
+                data.setdefault("action_status", "Pending")
+                data.setdefault("last_updated", now_str)
+                data.setdefault("escalation_level", 1)
 
-        cols = ",".join(data.keys())
-        vals = tuple(data.values())
-        placeholders = ",".join(["?"] * len(data))
+                cols = ",".join(data.keys())
+                vals = tuple(data.values())
+                placeholders = ",".join(["?"] * len(data))
 
-        conn.execute(f"INSERT INTO escalations ({cols}) VALUES ({placeholders})", vals)
-        conn.commit()
+                conn.execute(f"INSERT INTO escalations ({cols}) VALUES ({placeholders})", vals)
+                conn.commit()
 
-    if data["rule_sentiment"] == "Negative" or data["transformer_sentiment"] == "Negative":
-        if data["urgency"] == "High":
-            send_alert_email(
-                f"Escalation ID: {data['id']}\nCustomer: {data['customer']}\nIssue: {data['issue'][:200]}"
-            )
+            if data["rule_sentiment"] == "Negative" or data["transformer_sentiment"] == "Negative":
+                if data["urgency"] == "High":
+                    send_alert_email(
+                        f"Escalation ID: {data['id']}\nCustomer: {data['customer']}\nIssue: {data['issue'][:200]}"
+                    )
+            break  # success
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                if attempt < retries - 1:
+                    import time
+                    time.sleep(0.2)  # short delay before retrying
+                    continue
+                else:
+                    raise
+            else:
+                raise
+
 
 # ----------------------- Email Parser -----------------------
 def parse_emails():
