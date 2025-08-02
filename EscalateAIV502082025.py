@@ -5,131 +5,109 @@ from email.header import decode_header
 import datetime
 import pandas as pd
 import sqlite3
-import re
 import os
 from dotenv import load_dotenv
-import base64
 
 # Load environment variables
 load_dotenv()
 
-# Gmail credentials from environment variables (no user input needed)
 EMAIL = os.getenv("EMAIL_USER")
 APP_PASSWORD = os.getenv("EMAIL_PASS")
-IMAP_SERVER = os.getenv("EMAIL_SERVER") or "imap.gmail.com"
+EMAIL_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
 
 # Initialize database
-conn = sqlite3.connect("escalations.db")
-cursor = conn.cursor()
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS escalations (
-        escalation_id TEXT PRIMARY KEY,
-        customer TEXT,
-        issue TEXT,
-        date TEXT,
-        status TEXT,
-        sentiment TEXT,
-        priority TEXT,
-        action_taken TEXT
-    )
-""")
-conn.commit()
-conn.close()
+def init_db():
+    conn = sqlite3.connect("escalations.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS escalations (
+            escalation_id TEXT PRIMARY KEY,
+            customer TEXT,
+            issue TEXT,
+            date TEXT,
+            status TEXT,
+            sentiment TEXT,
+            priority TEXT,
+            action_taken TEXT DEFAULT ''
+        )
+    """)
+    conn.commit()
+    conn.close()
 
+# Email fetching function
 def connect_and_fetch_emails():
     if not EMAIL or not APP_PASSWORD:
-        st.warning("🔐 Gmail credentials not found in environment variables.")
+        st.warning("🔐 Email or App Password missing. Please check .env file.")
         return []
 
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
+        mail = imaplib.IMAP4_SSL(EMAIL_SERVER)
         mail.login(EMAIL, APP_PASSWORD)
         st.success("📡 Connected to Gmail.")
     except imaplib.IMAP4.error as e:
         st.error(f"❌ Gmail login failed: {str(e)}")
         return []
 
-    status, messages = mail.select("inbox")
+    status, _ = mail.select("inbox")
     if status != 'OK':
-        st.error("❌ Could not select the inbox.")
+        st.error("❌ Could not select inbox.")
         return []
 
     result, data = mail.search(None, '(UNSEEN)')
-    if result != 'OK' or not data or not data[0]:
-        st.info("📪 No new emails or error in fetching.")
+    if result != 'OK':
+        st.info("📭 No unread emails found.")
         return []
 
-    email_ids = data[0].split()
     fetched_emails = []
-
-    for num in email_ids[-10:]:  # Limit for performance
+    for num in data[0].split()[-10:]:
         result, msg_data = mail.fetch(num, '(RFC822)')
         if result != 'OK':
             continue
+
         msg = email.message_from_bytes(msg_data[0][1])
-
         subject, encoding = decode_header(msg["Subject"])[0]
-        if isinstance(subject, bytes):
-            subject = subject.decode(encoding or 'utf-8', errors='ignore')
-
+        subject = subject.decode(encoding or 'utf-8') if isinstance(subject, bytes) else subject
         from_ = msg.get("From")
         date = msg.get("Date")
 
         body = ""
         if msg.is_multipart():
             for part in msg.walk():
-                content_type = part.get_content_type()
-                content_disposition = str(part.get("Content-Disposition"))
-                if content_type == "text/plain" and "attachment" not in content_disposition:
+                if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition")):
                     try:
                         body = part.get_payload(decode=True).decode()
+                        break
                     except:
                         pass
-                    break
         else:
             try:
                 body = msg.get_payload(decode=True).decode()
             except:
                 pass
 
-        fetched_emails.append({
-            "from": from_,
-            "subject": subject,
-            "body": body,
-            "date": date
-        })
-
-        mail.store(num, '+FLAGS', '\\Seen')  # Mark as read
+        fetched_emails.append({"from": from_, "subject": subject, "body": body, "date": date})
+        mail.store(num, '+FLAGS', '\\Seen')
 
     mail.logout()
-
-    # Save emails to Excel
-    df_emails = pd.DataFrame(fetched_emails)
-    if not df_emails.empty:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"fetched_emails_{timestamp}.xlsx"
-        df_emails.to_excel(filename, index=False)
-        st.success(f"📄 Emails saved to {filename}")
-
     return fetched_emails
 
+# NLP and Logging function
 def analyze_and_log_emails(fetched_emails):
     conn = sqlite3.connect("escalations.db")
     cursor = conn.cursor()
-
     for email_data in fetched_emails:
         from_email = email_data['from']
         subject = email_data['subject']
-        body = email_data['body']
+        body = email_data['body'][:500]
         date = email_data['date']
 
         cursor.execute("SELECT COUNT(*) FROM escalations WHERE customer=? AND issue=?", (from_email, body))
         if cursor.fetchone()[0] > 0:
-            continue  # Skip duplicate
+            continue  # duplicate
 
-        urgency_keywords = ['urgent', 'immediately', 'critical', 'fail', 'escalate', 'issue', 'problem', 'complaint']
+        urgency_keywords = ['urgent', 'critical', 'immediately', 'fail', 'problem', 'escalate']
         sentiment_score = sum(1 for word in urgency_keywords if word in body.lower())
-        sentiment = "Negative" if sentiment_score > 0 else "Positive"
+        sentiment = "Negative" if sentiment_score else "Positive"
         priority = "High" if sentiment_score >= 2 else "Low"
 
         cursor.execute("SELECT COUNT(*) FROM escalations")
@@ -137,54 +115,52 @@ def analyze_and_log_emails(fetched_emails):
         escalation_id = f"SESICE-{count}"
 
         cursor.execute("""
-            INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, action_taken)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (escalation_id, from_email, body[:500], date, "Open", sentiment, priority, ""))
+            INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (escalation_id, from_email, body, date, "Open", sentiment, priority))
 
     conn.commit()
     conn.close()
 
-# The error is caused by referencing keys in the DataFrame row that might not exist.
-# Let's add debugging and fallback to avoid KeyError during rendering.
-
+# Kanban UI
 def render_kanban():
     conn = sqlite3.connect("escalations.db")
     df = pd.read_sql_query("SELECT * FROM escalations", conn)
     conn.close()
 
-    statuses = ["Open", "In Progress", "Resolved"]
-    st.subheader("📋 Escalation Kanban Board")
-    
-    cols = st.columns(len(statuses))
-    for idx, status in enumerate(statuses):
+    status_columns = ["Open", "In Progress", "Resolved"]
+    cols = st.columns(len(status_columns))
+    for idx, status in enumerate(status_columns):
         with cols[idx]:
-            st.markdown(f"**{status}**")
-            filtered = df[df["status"] == status]
-            for _, row in filtered.iterrows():
-                escalation_id = row.get("escalation_id", "UNKNOWN")
-                sentiment = row.get("sentiment", "Unknown")
-                priority = row.get("priority", "Unknown")
-                customer = row.get("customer", "")
-                issue = row.get("issue", "")
-                date = row.get("date", "")
-                
-                with st.expander(f"{escalation_id} - {sentiment}/{priority}"):
-                    st.write(f"**Customer:** {customer}")
-                    st.write(f"**Issue:** {issue}")
-                    st.write(f"**Date:** {date}")
-
-                    new_status = st.selectbox("Update Status", statuses, index=statuses.index(status), key=f"status_{escalation_id}")
-                    action_taken = st.text_area("Action Taken", key=f"action_{escalation_id}")
-
-                    if st.button("Update", key=f"update_{escalation_id}"):
+            st.subheader(f"{status} ({(df['status'] == status).sum()})")
+            for _, row in df[df['status'] == status].iterrows():
+                with st.expander(f"{row.get('escalation_id')} - {row.get('sentiment')}/{row.get('priority')}"):
+                    st.write(f"**From:** {row.get('customer')}")
+                    st.write(f"**Issue:** {row.get('issue')}")
+                    new_status = st.selectbox("Update Status", status_columns, index=status_columns.index(status), key=row.get('escalation_id') + '_status')
+                    action_taken = st.text_area("Action Taken", value=row.get('action_taken', ''), key=row.get('escalation_id') + '_action')
+                    if st.button("Save", key=row.get('escalation_id') + '_save'):
                         conn = sqlite3.connect("escalations.db")
                         cursor = conn.cursor()
-                        cursor.execute("""
-                            UPDATE escalations
-                            SET status = ?, action_taken = ?
-                            WHERE escalation_id = ?
-                        """, (new_status, action_taken, escalation_id))
+                        cursor.execute("UPDATE escalations SET status=?, action_taken=? WHERE escalation_id=?", (new_status, action_taken, row.get('escalation_id')))
                         conn.commit()
                         conn.close()
-                        st.success("Escalation updated successfully.")
                         st.experimental_rerun()
+
+# Main App
+st.set_page_config(page_title="EscalateAI", layout="wide")
+st.title("🚨 EscalateAI - Escalation Management")
+
+init_db()
+
+if st.button("📬 Fetch Emails"):
+    emails = connect_and_fetch_emails()
+    if emails:
+        analyze_and_log_emails(emails)
+        st.success(f"✅ {len(emails)} emails fetched and logged.")
+    else:
+        st.info("No new emails.")
+
+st.markdown("---")
+st.subheader("🧾 Escalation Kanban Board")
+render_kanban()
