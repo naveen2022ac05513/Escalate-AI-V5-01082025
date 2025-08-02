@@ -318,40 +318,39 @@ for col, status in zip(kanban_cols, statuses):
         if filtered.empty:
             st.write("_No escalations_")
         else:
-            for idx, row in filtered.iterrows():
-                with st.expander(f"{row['id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
-                    st.markdown(f"**Issue:** {row['issue']}")
-                    st.markdown(f"**Escalated:** {'Yes' if row.get('escalated', 0) else 'No'}")
-                    st.markdown(f"**Date:** {row['date_reported']}")
+           for idx, row in filtered.iterrows():
+    with st.expander(f"{row['id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
+        st.markdown(f"**Issue:** {row['issue']}")
+        st.markdown(f"**Escalated:** {'Yes' if row.get('escalated', 0) else 'No'}")
+        st.markdown(f"**Date:** {row['date_reported']}")
 
-                    new_owner = st.text_input("Owner", value=row.get("owner", ""), key=f"owner_{row['id']}")
-                       new_action_status = st.text_input(
-                            "Action Taken",
-                            value=row.get("action_status", ""),
-                            key=f"action_status_{row['id']}"
-                                )"
-                    )
-                    new_status = st.selectbox(
-                        "Status",
-                        options=statuses,
-                        index=statuses.index(row.get("status", "Open")),
-                        key=f"status_{row['id']}"
-                    )
+        new_owner = st.text_input("Owner", value=row.get("owner", ""), key=f"owner_{row['id']}")
+        new_action_status = st.text_input(
+            "Action Taken",
+            value=row.get("action_status", ""),
+            key=f"action_status_{row['id']}"
+        )
+        new_status = st.selectbox(
+            "Status",
+            options=statuses,
+            index=statuses.index(row.get("status", "Open")),
+            key=f"status_{row['id']}"
+        )
 
-                    if st.button("Update", key=f"update_{row['id']}"):
-                        try:
-                            with sqlite3.connect(DB_PATH) as conn:
-                                conn.execute(
-                                    """
-                                    UPDATE escalations SET owner=?, action_status=?, status=? WHERE id=?
-                                    """,
-                                    (new_owner, new_action_status, new_status, row['id'])
-                                )
-                                conn.commit()
-                            st.success(f"Updated escalation {row['id']}!")
-                            st.session_state['needs_refresh'] = True
-                        except Exception as e:
-                            st.error(f"Failed to update escalation: {e}")
+        if st.button("Update", key=f"update_{row['id']}"):
+            try:
+                with sqlite3.connect(DB_PATH) as conn:
+                    conn.execute(
+                        """
+                        UPDATE escalations SET owner=?, action_status=?, status=? WHERE id=?
+                        """,
+                        (new_owner, new_action_status, new_status, row['id'])
+                    )
+                    conn.commit()
+                st.success(f"Updated escalation {row['id']}!")
+                st.session_state['needs_refresh'] = True
+            except Exception as e:
+                st.error(f"Failed to update escalation: {e}")
 
 if st.session_state.get('needs_refresh'):
     st.session_state['needs_refresh'] = False
