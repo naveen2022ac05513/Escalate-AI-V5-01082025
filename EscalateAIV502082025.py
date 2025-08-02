@@ -425,10 +425,9 @@ for col, status in zip(cols, statuses):
                                     f"Hello,\n\nYou have been assigned the escalation case {row['id']}.\n\nIssue:\n{row['issue']}\n\nPlease attend to this promptly."
                                 )
                             st.success(f"Escalation {row['id']} updated.")
-                         
-                        if st.session_state.get('needs_refresh'):
-                           st.session_state['needs_refresh'] = False
-                           st.info("🔄 Please refresh the page to see the updated escalation data.")
+                            if st.session_state.get('needs_refresh'):
+                               st.session_state['needs_refresh'] = False
+                               st.info("🔄 Please refresh the page to see the updated escalation data.")
                         except Exception as e:
                             st.error(f"Update failed: {e}")
 
