@@ -1,8 +1,3 @@
-Certainly! Here's the full updated code again, with **detailed explanations** for each major block to help you understand exactly what it does and how it fits into the overall EscalateAI system.
-
----
-
-```python
 # ==============================================================
 # EscalateAI – Escalation Management Tool with Email Parsing
 # --------------------------------------------------------------
