@@ -325,24 +325,25 @@ with st.sidebar:
         try:
             df_upload = pd.read_excel(uploaded_file)
               for idx, row in df_upload.iterrows():
-                    cust = row.get("customer", "Unknown")
-                    issue = str(row.get("issue", ""))
-                    date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                    rs, ts, urgency, escalated = analyze_issue(issue)
-                    try:
-                        insert_escalation({
-                            "customer": cust,
-                            "issue": issue,
-                            "date_reported": date_reported,
-                            "rule_sentiment": rs,
-                            "transformer_sentiment": ts,
-                            "urgency": urgency,
-                            "escalated": int(escalated),
-                        })
-                    except sqlite3.IntegrityError as e:
-                        st.error(f"Duplicate ID error while inserting row {idx + 1}: {e}")
-                        # Optionally, skip or break here
-                    time.sleep(0.1)  # wait 100 ms between inserts to reduce race condition
+                cust = row.get("customer", "Unknown")
+                issue = str(row.get("issue", ""))
+                date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                rs, ts, urgency, escalated = analyze_issue(issue)
+                try:
+                    insert_escalation({
+                        "customer": cust,
+                        "issue": issue,
+                        "date_reported": date_reported,
+                        "rule_sentiment": rs,
+                        "transformer_sentiment": ts,
+                        "urgency": urgency,
+                        "escalated": int(escalated),
+                    })
+                except sqlite3.IntegrityError as e:
+                    st.error(f"Duplicate ID error while inserting row {idx + 1}: {e}")
+                    # Optionally, skip or break here
+                time.sleep(0.1)  # wait 100 ms between inserts to reduce race condition
+
 
 
 # Load escalations for dashboard
