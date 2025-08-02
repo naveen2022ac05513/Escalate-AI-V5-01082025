@@ -7,7 +7,6 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict
-import time
 import smtplib
 
 import pandas as pd
@@ -30,14 +29,12 @@ ALERT_RECEIVER = os.getenv("ALERT_RECEIVER", EMAIL_USER)
 DB_PATH = "escalateai.db"
 IMAP_FOLDER = "INBOX"
 
-# Setup logging
 logging.basicConfig(
     filename="escalateai.log",
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Initialize DB and create table if needed
 def initialize_db():
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
@@ -59,14 +56,12 @@ def initialize_db():
 
 initialize_db()
 
-# Load transformer sentiment analysis model
 @st.cache_resource(show_spinner=False)
 def load_transformer_model():
     return pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 
 transformer_model = load_transformer_model()
 
-# Simple negative keywords for rule-based sentiment
 NEG_WORDS = [
     "fail", "break", "crash", "defect", "fault", "delay", "complaint",
     "escalate", "urgent", "immediate", "critical", "problem", "issue"
@@ -155,7 +150,7 @@ def fetch_unseen_emails():
 
         email_ids = response[0].split()
         fetched_emails = []
-        for eid in email_ids[-10:]:  # Limit to last 10 unseen emails
+        for eid in email_ids[-10:]:
             status, msg_data = mail.fetch(eid, "(RFC822)")
             if status != "OK":
                 continue
@@ -178,7 +173,6 @@ def fetch_unseen_emails():
                 "issue": clean_body.strip()[:1000],
                 "date_reported": date
             })
-            # Mark as seen so not fetched again
             mail.store(eid, '+FLAGS', '\\Seen')
         mail.logout()
         return fetched_emails
@@ -188,11 +182,9 @@ def fetch_unseen_emails():
 
 def analyze_and_log_emails(emails: List[Dict]):
     count = 0
-    new_escalations = []
     for email_data in emails:
         sentiment_rule = rule_sentiment(email_data["issue"])
         sentiment_trans = transformer_sentiment(email_data["issue"])
-        # If either says Negative, consider Negative
         sentiment = "Negative" if "Negative" in [sentiment_rule, sentiment_trans] else "Positive"
         priority = determine_priority(email_data["issue"])
 
@@ -205,8 +197,6 @@ def analyze_and_log_emails(emails: List[Dict]):
         })
         if inserted:
             count += 1
-            new_escalations.append(email_data)
-    # Create Excel file for all escalations on each fetch
     create_excel_file()
     return count
 
@@ -236,7 +226,7 @@ def escalate_overdue_cases():
                 last_upd_dt = datetime.strptime(last_updated, "%Y-%m-%d %H:%M:%S")
                 if now - last_upd_dt > threshold:
                     new_level = level + 1
-                    new_owner = owner if new_level == 1 else "manager@example.com"  # example logic
+                    new_owner = owner if new_level == 1 else "manager@example.com"
                     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
                     conn.execute("""
                         UPDATE escalations SET escalation_level=?, owner=?, last_updated=? WHERE escalation_id=?
@@ -250,14 +240,49 @@ def escalate_overdue_cases():
     except Exception as e:
         logging.error(f"Error in auto escalation: {e}")
 
-# Scheduler setup
 scheduler = BackgroundScheduler()
 scheduler.add_job(lambda: analyze_and_log_emails(fetch_unseen_emails()), 'interval', minutes=1, id='email_fetch_job', replace_existing=True)
 scheduler.add_job(escalate_overdue_cases, 'interval', hours=1, id='auto_escalation_job', replace_existing=True)
 scheduler.start()
 
-# Streamlit UI starts here
 st.title("🚀 EscalateAI - AI-driven Escalation Management")
+
+# Sidebar - Upload Excel file for bulk complaints import
+st.sidebar.header("📥 Bulk Upload Complaints via Excel")
+uploaded_file = st.sidebar.file_uploader("Upload Excel (.xlsx) file with columns: customer, issue, date_reported", type=["xlsx"])
+if uploaded_file is not None:
+    try:
+        df_upload = pd.read_excel(uploaded_file)
+        required_cols = {"customer", "issue", "date_reported"}
+        if not required_cols.issubset(df_upload.columns.str.lower()):
+            st.sidebar.error(f"Excel must contain columns: {required_cols}")
+        else:
+            # Normalize column names to lower case
+            df_upload.columns = [c.lower() for c in df_upload.columns]
+
+            count_new = 0
+            for _, row in df_upload.iterrows():
+                cust = str(row["customer"]).strip()
+                issue = str(row["issue"]).strip()
+                date_rpt = str(row["date_reported"]).strip()
+                if cust and issue:
+                    sentiment_rule = rule_sentiment(issue)
+                    sentiment_trans = transformer_sentiment(issue)
+                    sentiment = "Negative" if "Negative" in [sentiment_rule, sentiment_trans] else "Positive"
+                    priority = determine_priority(issue)
+                    inserted = insert_escalation({
+                        "customer": cust.lower(),
+                        "issue": issue[:1000],
+                        "date_reported": date_rpt,
+                        "sentiment": sentiment,
+                        "priority": priority
+                    })
+                    if inserted:
+                        count_new += 1
+            st.sidebar.success(f"✅ {count_new} escalations imported and logged.")
+            create_excel_file()
+    except Exception as e:
+        st.sidebar.error(f"Failed to process Excel file: {e}")
 
 # Manual escalation entry form
 st.header("✍️ Manually Add Escalation")
@@ -295,18 +320,15 @@ def load_escalations_df():
 
 df = load_escalations_df()
 
-# Filters
+# Filters sidebar
 with st.sidebar.expander("Filters", expanded=True):
     filter_status = st.multiselect("Filter by Status", options=["Open", "In Progress", "Resolved"], default=["Open", "In Progress", "Resolved"])
     filter_priority = st.multiselect("Filter by Priority", options=["High", "Low"], default=["High", "Low"])
-    filter_escalation_level = st.slider("Escalation Level", min_value=1, max_value=int(df["escalation_level"].max() if not df.empty else 5), value=(1, int(df["escalation_level"].max() if not df.empty else 5)))
-    filter_escalated_only = st.checkbox("Show only escalated cases", value=False)
+    filter_escalated_only = st.checkbox("Show only escalated (High priority) cases", value=False)
 
 filtered_df = df[
     (df["status"].isin(filter_status)) &
-    (df["priority"].isin(filter_priority)) &
-    (df["escalation_level"] >= filter_escalation_level[0]) &
-    (df["escalation_level"] <= filter_escalation_level[1])
+    (df["priority"].isin(filter_priority))
 ]
 
 if filter_escalated_only:
@@ -345,9 +367,8 @@ def render_kanban():
                         new_owner = st.text_input("Owner", value=row.get('owner', ''), key=f"owner_{row['escalation_id']}")
                         new_action = st.text_input("Action Taken", value=row.get('action_taken', ''), key=f"action_{row['escalation_id']}")
 
-                        status_value = row.get('status') or "Open"
                         try:
-                            selected_idx = status_columns.index(status_value)
+                            selected_idx = status_columns.index(row.get('status', "Open"))
                         except ValueError:
                             selected_idx = 0
                         new_status = st.selectbox("Update Status", status_columns, index=selected_idx, key=f"status_{row['escalation_id']}")
@@ -368,20 +389,18 @@ def render_kanban():
 
 render_kanban()
 
-# Export escalations to Excel button
-if not df.empty:
-    with sqlite3.connect(DB_PATH) as conn:
-        df_for_export = pd.read_sql("SELECT * FROM escalations ORDER BY last_updated DESC", conn)
-    excel_data = df_for_export.to_excel(index=False)
+# Download escalations as Excel
+if not filtered_df.empty:
+    to_export = filtered_df.copy()
+    excel_bytes = to_export.to_excel(index=False)
     st.download_button(
-        label="📥 Download Escalations as Excel",
-        data=excel_data,
-        file_name=f"escalations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        label="📥 Download Filtered Escalations as Excel",
+        data=excel_bytes,
+        file_name=f"escalations_filtered_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 else:
-    st.info("No escalations available to download.")
+    st.info("No escalations to download.")
 
-# Shutdown scheduler gracefully on exit (only works if app restarted manually)
 import atexit
 atexit.register(lambda: scheduler.shutdown())
