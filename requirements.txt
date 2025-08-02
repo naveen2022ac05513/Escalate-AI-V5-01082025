@@ -1,9 +1,8 @@
-torch
-transformers
 streamlit
 pandas
-numpy
+python-dotenv
 imapclient
 beautifulsoup4
 apscheduler
-python-dotenv
+transformers
+torch
