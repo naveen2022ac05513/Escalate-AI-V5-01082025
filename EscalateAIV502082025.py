@@ -98,8 +98,29 @@ initialize_db()
 migrate_db()
 
 # ----------------------- Sentiment Models -----------------------
-NEG_WORDS = [r"\b(delay|issue|failure|dissatisfaction|unacceptable|complaint|escalation|critical|risk|faulty|bad|poor|slow|crash|urgent|asap|immediately)\b"]
+# NEG_WORDS = [r"\b(delay|issue|failure|dissatisfaction|unacceptable|complaint|escalation|critical|risk|faulty|bad|poor|slow|crash|urgent|asap|immediately)\b"]
 
+NEG_WORDS = sorted(set([
+    # Technical Failures & Product Malfunction
+    "fail", "break", "crash", "defect", "fault", "degrade",
+    "damage", "trip", "malfunction", "blank", "shutdown", "discharge",
+
+    # Customer Dissatisfaction & Escalations
+    "dissatisfy", "frustrate", "complain", "reject", "delay",
+    "ignore", "escalate", "displease", "noncompliance", "neglect",
+
+    # Support Gaps & Operational Delays
+    "wait", "pending", "slow", "incomplete", "miss", "omit",
+    "unresolved", "shortage", "no response",
+
+    # Hazardous Conditions & Safety Risks
+    "fire", "burn", "flashover", "arc", "explode", "unsafe",
+    "leak", "corrode", "alarm", "incident",
+
+    # Business Risk & Impact
+    "impact", "loss", "risk", "downtime", "interrupt", "cancel",
+    "terminate", "penalty"
+]))
 @st.cache_resource(show_spinner=False)
 def load_transformer_model():
     return pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
