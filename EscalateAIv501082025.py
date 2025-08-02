@@ -31,6 +31,7 @@ from bs4 import BeautifulSoup
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 import smtplib
+import torch
 
 # Hugging Face transformers imports
 from transformers import pipeline
