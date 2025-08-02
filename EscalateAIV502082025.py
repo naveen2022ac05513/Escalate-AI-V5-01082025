@@ -34,17 +34,13 @@ import streamlit as st
 import imaplib
 import email
 from email.header import decode_header
-import datetime
 import pandas as pd
-import sqlite3
-import re
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-# Match .env variables
+# Correct variable names as per your .env file
 EMAIL = os.getenv("EMAIL_USER") or st.text_input("Enter your Gmail address")
 APP_PASSWORD = os.getenv("EMAIL_PASS") or st.text_input("Enter your Gmail App Password", type="password")
 EMAIL_SERVER = os.getenv("EMAIL_SERVER") or "imap.gmail.com"
@@ -57,27 +53,36 @@ def connect_and_fetch_emails():
     try:
         mail = imaplib.IMAP4_SSL(EMAIL_SERVER)
         mail.login(EMAIL, APP_PASSWORD)
+        st.success("📡 Connected to Gmail.")
     except imaplib.IMAP4.error as e:
         st.error(f"❌ Gmail login failed: {str(e)}")
         return []
 
-    status, messages = mail.select("inbox")
+    status, _ = mail.select("inbox")
     if status != 'OK':
         st.error("❌ Could not select the inbox.")
         return []
 
-    result, data = mail.search(None, '(UNSEEN)')
-    if result != 'OK':
-        st.info("📭 No unread emails found.")
+    # DEBUG: Try different search filters
+    result, data = mail.search(None, 'ALL')
+    st.write("🔍 Search result:", result)
+    st.write("📬 Raw data from search:", data)
+
+    if result != 'OK' or not data or not data[0]:
+        st.info("📭 No new unread emails.")
         return []
 
     email_ids = data[0].split()
+    st.write(f"📧 Found {len(email_ids)} unread emails.")
+
     fetched_emails = []
 
-    for num in email_ids[-10:]:  # Check only last 10 unseen emails for performance
+    for num in email_ids[-10:]:  # Read only last 10 unseen
         result, msg_data = mail.fetch(num, '(RFC822)')
         if result != 'OK':
+            st.warning(f"⚠️ Failed to fetch email ID {num}")
             continue
+
         msg = email.message_from_bytes(msg_data[0][1])
 
         subject, encoding = decode_header(msg["Subject"])[0]
@@ -90,9 +95,7 @@ def connect_and_fetch_emails():
         body = ""
         if msg.is_multipart():
             for part in msg.walk():
-                content_type = part.get_content_type()
-                content_disposition = str(part.get("Content-Disposition"))
-                if content_type == "text/plain" and "attachment" not in content_disposition:
+                if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition")):
                     try:
                         body = part.get_payload(decode=True).decode()
                     except:
@@ -111,13 +114,13 @@ def connect_and_fetch_emails():
             "date": date
         })
 
-        # Mark as seen to avoid processing again
-        mail.store(num, '+FLAGS', '\\Seen')
+        mail.store(num, '+FLAGS', '\\Seen')  # Mark as read
 
     mail.logout()
     return fetched_emails
 
-# Example usage within app
+
+# Streamlit UI
 st.header("📬 Gmail Escalation Fetcher")
 if st.button("🔄 Fetch Emails"):
     emails = connect_and_fetch_emails()
@@ -125,7 +128,8 @@ if st.button("🔄 Fetch Emails"):
         st.success(f"✅ {len(emails)} new emails fetched.")
         st.dataframe(pd.DataFrame(emails))
     else:
-        st.info("📪 No new emails or error in fetching.")
+        st.warning("📪 No new unread emails or error in fetching.")
+
 
 # ----------------------- Paths & ENV -----------------------
 APP_DIR = Path(__file__).resolve().parent
