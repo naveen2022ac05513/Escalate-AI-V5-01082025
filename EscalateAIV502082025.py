@@ -247,19 +247,17 @@ scheduler.start()
 
 st.title("🚀 EscalateAI - AI-driven Escalation Management")
 
-# Sidebar - Upload Excel file for bulk complaints import
+# Sidebar - Bulk upload, manual entry, and filters
 st.sidebar.header("📥 Bulk Upload Complaints via Excel")
-uploaded_file = st.sidebar.file_uploader("Upload Excel (.xlsx) file with columns: customer, issue, date_reported", type=["xlsx"])
+uploaded_file = st.sidebar.file_uploader("Upload Excel (.xlsx) with columns: customer, issue, date_reported", type=["xlsx"])
 if uploaded_file is not None:
     try:
         df_upload = pd.read_excel(uploaded_file)
         required_cols = {"customer", "issue", "date_reported"}
-        if not required_cols.issubset(df_upload.columns.str.lower()):
+        if not required_cols.issubset(set(c.lower() for c in df_upload.columns)):
             st.sidebar.error(f"Excel must contain columns: {required_cols}")
         else:
-            # Normalize column names to lower case
             df_upload.columns = [c.lower() for c in df_upload.columns]
-
             count_new = 0
             for _, row in df_upload.iterrows():
                 cust = str(row["customer"]).strip()
@@ -283,6 +281,41 @@ if uploaded_file is not None:
             create_excel_file()
     except Exception as e:
         st.sidebar.error(f"Failed to process Excel file: {e}")
+
+st.sidebar.header("✍️ Manually Add Escalation")
+with st.sidebar.form("manual_form"):
+    cust_email = st.text_input("Customer Email")
+    issue_text = st.text_area("Issue Description")
+    submit_manual = st.form_submit_button("Add Escalation")
+
+    if submit_manual:
+        if cust_email.strip() == "" or issue_text.strip() == "":
+            st.sidebar.error("Please enter both customer email and issue description.")
+        else:
+            sentiment_rule = rule_sentiment(issue_text)
+            sentiment_trans = transformer_sentiment(issue_text)
+            sentiment = "Negative" if "Negative" in [sentiment_rule, sentiment_trans] else "Positive"
+            priority = determine_priority(issue_text)
+
+            inserted = insert_escalation({
+                "customer": cust_email.lower(),
+                "issue": issue_text.strip()[:1000],
+                "date_reported": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "sentiment": sentiment,
+                "priority": priority
+            })
+            if inserted:
+                st.sidebar.success("Escalation logged successfully.")
+                st.experimental_rerun()
+            else:
+                st.sidebar.warning("Duplicate escalation found, not added.")
+
+# Filters sidebar section
+st.sidebar.header("🔎 Filters")
+filter_status = st.sidebar.multiselect("Filter by Status", options=["Open", "In Progress", "Resolved"], default=["Open", "In Progress", "Resolved"])
+filter_priority = st.sidebar.multiselect("Filter by Priority", options=["High", "Low"], default=["High", "Low"])
+filter_escalated_only = st.sidebar.checkbox("Show only escalated (High priority) cases", value=False)
+
 
 # Manual escalation entry form
 st.header("✍️ Manually Add Escalation")
