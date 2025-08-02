@@ -29,21 +29,23 @@ import email
 from email.header import decode_header
 import os
 from dotenv import load_dotenv
-
 import streamlit as st
 import imaplib
 import email
 from email.header import decode_header
+import datetime
 import pandas as pd
+import sqlite3
+import re
 import os
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
-# Correct variable names as per your .env file
-EMAIL = os.getenv("EMAIL_USER") or st.text_input("Enter your Gmail address")
-APP_PASSWORD = os.getenv("EMAIL_PASS") or st.text_input("Enter your Gmail App Password", type="password")
-EMAIL_SERVER = os.getenv("EMAIL_SERVER") or "imap.gmail.com"
+# Gmail credentials from environment variables or user input
+EMAIL = os.getenv("GMAIL_USER") or st.text_input("Enter your Gmail address")
+APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD") or st.text_input("Enter your Gmail App Password", type="password")
 
 def connect_and_fetch_emails():
     if not EMAIL or not APP_PASSWORD:
@@ -51,38 +53,34 @@ def connect_and_fetch_emails():
         return []
 
     try:
-        mail = imaplib.IMAP4_SSL(EMAIL_SERVER)
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(EMAIL, APP_PASSWORD)
         st.success("📡 Connected to Gmail.")
     except imaplib.IMAP4.error as e:
         st.error(f"❌ Gmail login failed: {str(e)}")
         return []
 
-    status, _ = mail.select("inbox")
+    status, messages = mail.select("inbox")
     if status != 'OK':
         st.error("❌ Could not select the inbox.")
         return []
 
-    # DEBUG: Try different search filters
-    result, data = mail.search(None, 'ALL')
+    result, data = mail.search(None, '(UNSEEN)')
     st.write("🔍 Search result:", result)
     st.write("📬 Raw data from search:", data)
 
-    if result != 'OK' or not data or not data[0]:
-        st.info("📭 No new unread emails.")
+    if result != 'OK':
+        st.info("📭 No unread emails found.")
         return []
 
     email_ids = data[0].split()
     st.write(f"📧 Found {len(email_ids)} unread emails.")
-
     fetched_emails = []
 
-    for num in email_ids[-10:]:  # Read only last 10 unseen
+    for num in email_ids[-10:]:  # Check only last 10 unseen emails for performance
         result, msg_data = mail.fetch(num, '(RFC822)')
         if result != 'OK':
-            st.warning(f"⚠️ Failed to fetch email ID {num}")
             continue
-
         msg = email.message_from_bytes(msg_data[0][1])
 
         subject, encoding = decode_header(msg["Subject"])[0]
@@ -95,7 +93,9 @@ def connect_and_fetch_emails():
         body = ""
         if msg.is_multipart():
             for part in msg.walk():
-                if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition")):
+                content_type = part.get_content_type()
+                content_disposition = str(part.get("Content-Disposition"))
+                if content_type == "text/plain" and "attachment" not in content_disposition:
                     try:
                         body = part.get_payload(decode=True).decode()
                     except:
@@ -114,10 +114,62 @@ def connect_and_fetch_emails():
             "date": date
         })
 
-        mail.store(num, '+FLAGS', '\\Seen')  # Mark as read
+        # Mark as seen to avoid processing again
+        mail.store(num, '+FLAGS', '\\Seen')
 
     mail.logout()
+
+    # Save to Excel file
+    df_emails = pd.DataFrame(fetched_emails)
+    if not df_emails.empty:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        excel_filename = f"fetched_emails_{timestamp}.xlsx"
+        df_emails.to_excel(excel_filename, index=False)
+        st.success(f"📄 Saved fetched emails to: {excel_filename}")
+
     return fetched_emails
+
+def analyze_and_log_emails(fetched_emails):
+    conn = sqlite3.connect("escalations.db")
+    cursor = conn.cursor()
+
+    for email_data in fetched_emails:
+        from_email = email_data['from']
+        subject = email_data['subject']
+        body = email_data['body']
+        date = email_data['date']
+
+        cursor.execute("SELECT COUNT(*) FROM escalations WHERE customer=? AND issue=?", (from_email, body))
+        if cursor.fetchone()[0] > 0:
+            continue  # Skip duplicate
+
+        urgency_keywords = ['urgent', 'immediately', 'critical', 'fail', 'escalate', 'issue', 'problem', 'complaint']
+        sentiment_score = sum(1 for word in urgency_keywords if word in body.lower())
+        sentiment = "Negative" if sentiment_score > 0 else "Positive"
+        priority = "High" if sentiment_score >= 2 else "Low"
+
+        cursor.execute("SELECT COUNT(*) FROM escalations")
+        count = cursor.fetchone()[0] + 250001
+        escalation_id = f"SESICE-{count}"
+
+        cursor.execute("""
+            INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (escalation_id, from_email, body[:500], date, "Open", sentiment, priority))
+
+    conn.commit()
+    conn.close()
+
+# Example usage within app
+st.header("📬 Gmail Escalation Fetcher")
+if st.button("🔄 Fetch Emails"):
+    emails = connect_and_fetch_emails()
+    if emails:
+        analyze_and_log_emails(emails)
+        st.success(f"✅ {len(emails)} emails analyzed and logged if valid.")
+        st.dataframe(pd.DataFrame(emails))
+    else:
+        st.info("📪 No new emails or error in fetching.")
 
 
 # Streamlit UI
