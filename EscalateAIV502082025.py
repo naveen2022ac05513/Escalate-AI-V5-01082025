@@ -34,7 +34,6 @@ load_dotenv()
 
 EMAIL = os.getenv("EMAIL")
 APP_PASSWORD = os.getenv("APP_PASSWORD")
-
 mail = imaplib.IMAP4_SSL("imap.gmail.com")
 mail.login(EMAIL, APP_PASSWORD)
 
