@@ -284,6 +284,60 @@ if st.sidebar.button("Manually Parse Emails"):
         parse_emails()
 
 # Streamlit UI
+import pandas as pd
+import sqlite3
+from datetime import datetime
+import time
+
+def generate_new_id():
+    conn = sqlite3.connect("escalations.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT id FROM escalations ORDER BY id DESC LIMIT 1")
+    last_id = c.fetchone()
+    conn.close()
+
+    if last_id:
+        last_number = int(last_id[0].split("-")[1])
+    else:
+        last_number = 250000
+    new_number = last_number + 1
+    return f"SESICE-{new_number:06d}"
+
+def insert_escalation(escalation_data, max_retries=5):
+    conn = sqlite3.connect("escalations.db", check_same_thread=False)
+    c = conn.cursor()
+
+    retries = 0
+    while retries < max_retries:
+        new_id = generate_new_id()
+        try:
+            c.execute('''
+                INSERT INTO escalations (id, customer, issue, date_reported, rule_sentiment,
+                transformer_sentiment, urgency, escalated, status, action_taken, last_updated, escalation_level)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                new_id,
+                escalation_data.get("customer"),
+                escalation_data.get("issue"),
+                escalation_data.get("date_reported"),
+                escalation_data.get("rule_sentiment"),
+                escalation_data.get("transformer_sentiment"),
+                escalation_data.get("urgency"),
+                escalation_data.get("escalated"),
+                escalation_data.get("status", "Open"),
+                escalation_data.get("action_taken", ""),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                0
+            ))
+            conn.commit()
+            conn.close()
+            return
+        except sqlite3.IntegrityError:
+            retries += 1
+            continue  # try again with new ID
+    conn.close()
+    raise Exception("Failed to insert escalation after multiple retries due to duplicate ID.")
+
 st.title("🚀 EscalateAI - Escalation Management with Time-based Auto Escalation")
 
 # Sidebar controls
