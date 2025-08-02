@@ -9,9 +9,9 @@
 # • Logs scheduler activity and allows pause/resume controls
 # • Notifies when new escalation is added
 # • Filters by urgency, sentiment, date, escalation status
-# • Kanban board with Status, Owner, Action Status editable per case
+# • Kanban board with Status, Owner, Action Status editable per case, with counts and colors
 # --------------------------------------------------------------
-# Author: Naveen Gandham • v1.6.1 • August 2025
+# Author: Naveen Gandham • v1.7.0 • August 2025
 # ==============================================================
 
 import os
@@ -71,27 +71,16 @@ def initialize_db():
                 transformer_sentiment TEXT,
                 urgency TEXT,
                 escalated INTEGER,
+                status TEXT DEFAULT 'Open',
+                owner TEXT DEFAULT '',
+                action_status TEXT DEFAULT 'Pending',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
         conn.commit()
 
-def update_db_schema():
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.execute("PRAGMA table_info(escalations)")
-        columns = [row[1] for row in cur.fetchall()]
-
-        if "status" not in columns:
-            conn.execute("ALTER TABLE escalations ADD COLUMN status TEXT DEFAULT 'Open'")
-        if "owner" not in columns:
-            conn.execute("ALTER TABLE escalations ADD COLUMN owner TEXT DEFAULT ''")
-        if "action_status" not in columns:
-            conn.execute("ALTER TABLE escalations ADD COLUMN action_status TEXT DEFAULT 'Pending'")
-        conn.commit()
-
 initialize_db()
-update_db_schema()
 
 # ----------------------- Sentiment Models -----------------------
 NEG_WORDS = [r"\b(delay|issue|failure|dissatisfaction|unacceptable|complaint|escalation|critical|risk|faulty|bad|poor|slow|crash|urgent|asap|immediately)\b"]
@@ -303,64 +292,66 @@ with sqlite3.connect(DB_PATH) as conn:
         st.error(f"Database read error: {e}")
         df = pd.DataFrame()
 
-# ------------------- Kanban Board -------------------
+# ----------------------- Kanban Board with Colors & Counts -----------------------
 st.header("Escalations Kanban Board")
 
 statuses = ["Open", "In Progress", "Resolved"]
+STATUS_COLORS = {
+    "Open": "#ffcccc",          # light red
+    "In Progress": "#fff0b3",   # light yellow
+    "Resolved": "#ccffcc"       # light green
+}
+
 kanban_cols = st.columns(len(statuses))
 
-if df.empty:
-    st.info("No escalations found.")
-else:
-    for col, status in zip(kanban_cols, statuses):
-        with col:
-            st.subheader(status)
-            filtered = df[df["status"] == status] if "status" in df.columns else df
+for col, status in zip(kanban_cols, statuses):
+    count = len(df[df["status"] == status]) if not df.empty else 0
+    with col:
+        # Colored header with count
+        st.markdown(
+            f"<h3 style='background-color:{STATUS_COLORS[status]};"
+            f"padding:8px;border-radius:6px;text-align:center;'>{status} ({count})</h3>",
+            unsafe_allow_html=True
+        )
 
-            if filtered.empty:
-                st.write("_No escalations_")
-            else:
-                for idx, row in filtered.iterrows():
-                    with st.expander(f"{row['id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
-                        st.markdown(f"**Issue:** {row['issue']}")
-                        st.markdown(f"**Escalated:** {'Yes' if row.get('escalated', 0) else 'No'}")
-                        st.markdown(f"**Date:** {row['date_reported']}")
+        filtered = df[df["status"] == status] if not df.empty else pd.DataFrame()
+        if filtered.empty:
+            st.write("_No escalations_")
+        else:
+            for idx, row in filtered.iterrows():
+                with st.expander(f"{row['id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
+                    st.markdown(f"**Issue:** {row['issue']}")
+                    st.markdown(f"**Escalated:** {'Yes' if row.get('escalated', 0) else 'No'}")
+                    st.markdown(f"**Date:** {row['date_reported']}")
 
-                        # Editable Owner
-                        new_owner = st.text_input(
-                            "Owner",
-                            value=row.get("owner", ""),
-                            key=f"owner_{row['id']}"
-                        )
-                        # Editable Action Status
-                        new_action_status = st.selectbox(
-                            "Action Status",
-                            options=["Pending", "In Progress", "Completed"],
-                            index=["Pending", "In Progress", "Completed"].index(row.get("action_status", "Pending")),
-                            key=f"action_status_{row['id']}"
-                        )
-                        # Editable Status (to move between Kanban columns)
-                        new_status = st.selectbox(
-                            "Status",
-                            options=statuses,
-                            index=statuses.index(row.get("status", "Open")),
-                            key=f"status_{row['id']}"
-                        )
+                    new_owner = st.text_input("Owner", value=row.get("owner", ""), key=f"owner_{row['id']}")
+                    new_action_status = st.selectbox(
+                        "Action Status",
+                        options=["Pending", "In Progress", "Completed"],
+                        index=["Pending", "In Progress", "Completed"].index(row.get("action_status", "Pending")),
+                        key=f"action_status_{row['id']}"
+                    )
+                    new_status = st.selectbox(
+                        "Status",
+                        options=statuses,
+                        index=statuses.index(row.get("status", "Open")),
+                        key=f"status_{row['id']}"
+                    )
 
-                        if st.button("Update", key=f"update_{row['id']}"):
-                            try:
-                                with sqlite3.connect(DB_PATH) as conn:
-                                    conn.execute(
-                                        """
-                                        UPDATE escalations SET owner=?, action_status=?, status=? WHERE id=?
-                                        """,
-                                        (new_owner, new_action_status, new_status, row['id'])
-                                    )
-                                    conn.commit()
-                                st.success(f"Updated escalation {row['id']}!")
-                                st.session_state['needs_refresh'] = True
-                            except Exception as e:
-                                st.error(f"Failed to update escalation: {e}")
+                    if st.button("Update", key=f"update_{row['id']}"):
+                        try:
+                            with sqlite3.connect(DB_PATH) as conn:
+                                conn.execute(
+                                    """
+                                    UPDATE escalations SET owner=?, action_status=?, status=? WHERE id=?
+                                    """,
+                                    (new_owner, new_action_status, new_status, row['id'])
+                                )
+                                conn.commit()
+                            st.success(f"Updated escalation {row['id']}!")
+                            st.session_state['needs_refresh'] = True
+                        except Exception as e:
+                            st.error(f"Failed to update escalation: {e}")
 
 if st.session_state.get('needs_refresh'):
     st.session_state['needs_refresh'] = False
