@@ -325,11 +325,11 @@ for col, status in zip(kanban_cols, statuses):
                     st.markdown(f"**Date:** {row['date_reported']}")
 
                     new_owner = st.text_input("Owner", value=row.get("owner", ""), key=f"owner_{row['id']}")
-                   new_action_status = st.text_input(
-                        "Action Taken",
-                        value=row.get("action_status", ""),
-                        key=f"action_status_{row['id']}"
-                    )"
+                       new_action_status = st.text_input(
+                            "Action Taken",
+                            value=row.get("action_status", ""),
+                            key=f"action_status_{row['id']}"
+                                )"
                     )
                     new_status = st.selectbox(
                         "Status",
