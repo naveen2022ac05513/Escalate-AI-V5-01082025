@@ -276,16 +276,12 @@ logging.basicConfig(level=logging.INFO)
 # Inspect DataFrame columns
 st.write("📄 Columns in DataFrame:", df.columns.tolist())
 
-# Safely apply sentiment filter
-if "rule_sentiment" in df.columns:
-    df = df[df["rule_sentiment"] == sentiment_filter]
-    st.success(f"✅ Filter applied for sentiment: {sentiment_filter}")
-    logging.info(f"Applied sentiment filter: {sentiment_filter}")
-else:
-    st.warning("⚠️ Column 'rule_sentiment' not found in data. Sentiment filter skipped.")
-    logging.warning("Missing 'rule_sentiment' column — skipping filter.")
+# Use this if you want to filter by sentiment
+sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["sentiment"].unique()) if not df.empty else [])
+
 if sentiment_filter != "All":
-    df = df[df["rule_sentiment"] == sentiment_filter]
+    df = df[df["sentiment"] == sentiment_filter]
+
 
 # ----------------------- Manual Parser -----------------------
 with st.expander("✍️ Manually Parse Email"):
