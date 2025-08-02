@@ -9,11 +9,15 @@
 # • Logs scheduler activity and allows pause/resume controls
 # • Notifies when new escalation is added
 # • Filters by urgency, sentiment, date, escalation status
+# • Kanban board with Status, Owner, Action Status editable per case
 # --------------------------------------------------------------
-# Author: Naveen Gandham • v1.5.0 • August 2025
+# Author: Naveen Gandham • v1.6.0 • August 2025
 # ==============================================================
 
-import os, re, sqlite3, email
+import os
+import re
+import sqlite3
+import email
 from email.mime.text import MIMEText
 from datetime import datetime
 from pathlib import Path
@@ -31,19 +35,22 @@ import smtplib
 from transformers import pipeline
 
 # ----------------------- Paths & ENV -----------------------
-APP_DIR   = Path(__file__).resolve().parent
-DATA_DIR  = APP_DIR / "data"; DATA_DIR.mkdir(exist_ok=True)
-MODEL_DIR = APP_DIR / "models"; MODEL_DIR.mkdir(exist_ok=True)
-DB_PATH   = DATA_DIR / "escalateai.db"
+APP_DIR = Path(__file__).resolve().parent
+DATA_DIR = APP_DIR / "data"
+DATA_DIR.mkdir(exist_ok=True)
+MODEL_DIR = APP_DIR / "models"
+MODEL_DIR.mkdir(exist_ok=True)
+DB_PATH = DATA_DIR / "escalateai.db"
 
 load_dotenv()
-IMAP_USER   = os.getenv("EMAIL_USER")
-IMAP_PASS   = os.getenv("EMAIL_PASS")
+IMAP_USER = os.getenv("EMAIL_USER")
+IMAP_PASS = os.getenv("EMAIL_PASS")
 IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
 ALERT_RECEIVER = os.getenv("ALERT_RECEIVER", IMAP_USER)
 
 # ----------------------- Logging -----------------------
-logfile = Path("logs"); logfile.mkdir(exist_ok=True)
+logfile = Path("logs")
+logfile.mkdir(exist_ok=True)
 logging.basicConfig(
     filename=logfile / "escalateai.log",
     level=logging.INFO,
@@ -70,7 +77,21 @@ def initialize_db():
         )
         conn.commit()
 
+def update_db_schema():
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.execute("PRAGMA table_info(escalations)")
+        columns = [row[1] for row in cur.fetchall()]
+
+        if "status" not in columns:
+            conn.execute("ALTER TABLE escalations ADD COLUMN status TEXT DEFAULT 'Open'")
+        if "owner" not in columns:
+            conn.execute("ALTER TABLE escalations ADD COLUMN owner TEXT DEFAULT ''")
+        if "action_status" not in columns:
+            conn.execute("ALTER TABLE escalations ADD COLUMN action_status TEXT DEFAULT 'Pending'")
+        conn.commit()
+
 initialize_db()
+update_db_schema()
 
 # ----------------------- Sentiment Models -----------------------
 NEG_WORDS = [r"\b(delay|issue|failure|dissatisfaction|unacceptable|complaint|escalation|critical|risk|faulty|bad|poor|slow|crash|urgent|asap|immediately)\b"]
@@ -115,7 +136,6 @@ def send_alert_email(issue_summary):
 # ----------------------- Insert with Sequential ID -----------------------
 def insert_escalation(data: dict):
     with sqlite3.connect(DB_PATH) as conn:
-        # Table is guaranteed to exist from initialize_db()
         cur = conn.execute(
             "SELECT MAX(CAST(SUBSTR(id, 7) AS INTEGER)) FROM escalations WHERE id LIKE 'SESICE-%'"
         )
@@ -127,6 +147,11 @@ def insert_escalation(data: dict):
 
         new_id = f"SESICE-{next_num:06d}"
         data["id"] = new_id
+
+        # Set defaults if not present
+        data.setdefault("status", "Open")
+        data.setdefault("owner", "")
+        data.setdefault("action_status", "Pending")
 
         cols = ",".join(data.keys())
         vals = tuple(data.values())
@@ -278,49 +303,61 @@ with sqlite3.connect(DB_PATH) as conn:
         st.error(f"Database read error: {e}")
         df = pd.DataFrame()
 
-# Filters
-st.header("Escalations Dashboard")
+# ------------------- Kanban Board -------------------
+st.header("Escalations Kanban Board")
+
+statuses = ["Open", "In Progress", "Resolved"]
+kanban_cols = st.columns(len(statuses))
 
 if df.empty:
     st.info("No escalations found.")
 else:
-    filter_choice = st.radio("Escalation Status:", ["All", "Escalated Only", "Non-Escalated"])
-    urgency_filter = st.selectbox("Urgency:", ["All"] + sorted(df["urgency"].unique()) if "urgency" in df.columns else [])
-    sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["rule_sentiment"].unique()) if "rule_sentiment" in df.columns else ["All"])
-    date_range = st.date_input("Date Range:", [])
+    for col, status in zip(kanban_cols, statuses):
+        with col:
+            st.subheader(status)
+            filtered = df[df["status"] == status] if "status" in df.columns else df
 
-    if filter_choice == "Escalated Only" and "escalated" in df.columns:
-        df = df[df["escalated"] == 1]
-    elif filter_choice == "Non-Escalated" and "escalated" in df.columns:
-        df = df[df["escalated"] == 0]
+            if filtered.empty:
+                st.write("_No escalations_")
+            else:
+                for idx, row in filtered.iterrows():
+                    with st.expander(f"{row['id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
+                        st.markdown(f"**Issue:** {row['issue']}")
+                        st.markdown(f"**Escalated:** {'Yes' if row.get('escalated', 0) else 'No'}")
+                        st.markdown(f"**Date:** {row['date_reported']}")
 
-    if urgency_filter != "All" and "urgency" in df.columns:
-        df = df[df["urgency"] == urgency_filter]
+                        # Editable Owner
+                        new_owner = st.text_input(
+                            "Owner",
+                            value=row.get("owner", ""),
+                            key=f"owner_{row['id']}"
+                        )
+                        # Editable Action Status
+                        new_action_status = st.selectbox(
+                            "Action Status",
+                            options=["Pending", "In Progress", "Completed"],
+                            index=["Pending", "In Progress", "Completed"].index(row.get("action_status", "Pending")),
+                            key=f"action_status_{row['id']}"
+                        )
+                        # Editable Status (to move between Kanban columns)
+                        new_status = st.selectbox(
+                            "Status",
+                            options=statuses,
+                            index=statuses.index(row.get("status", "Open")),
+                            key=f"status_{row['id']}"
+                        )
 
-    if sentiment_filter != "All" and "rule_sentiment" in df.columns:
-        df = df[df["rule_sentiment"] == sentiment_filter]
-
-    if date_range and len(date_range) == 2 and "date_reported" in df.columns:
-        start_date = date_range[0].strftime("%Y-%m-%d")
-        end_date = date_range[1].strftime("%Y-%m-%d")
-        df = df[(df["date_reported"] >= start_date) & (df["date_reported"] <= end_date)]
-
-    if df.empty:
-        st.info("No escalations found with selected filters.")
-    else:
-        for _, row in df.iterrows():
-            with st.expander(f"{row['id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
-                st.markdown(f"**Issue:** {row['issue']}")
-                st.markdown(f"**Escalated:** {'Yes' if row.get('escalated', 0) else 'No'}")
-                st.markdown(f"**Date:** {row['date_reported']}")
-
-        st.download_button(
-            key="download_filtered_escalations",
-            label="📥 Download Filtered Escalations (CSV)",
-            data=df.to_csv(index=False).encode(),
-            file_name="escalations_filtered.csv",
-            mime="text/csv"
-        )
+                        if st.button("Update", key=f"update_{row['id']}"):
+                            with sqlite3.connect(DB_PATH) as conn:
+                                conn.execute(
+                                    """
+                                    UPDATE escalations SET owner=?, action_status=?, status=? WHERE id=?
+                                    """,
+                                    (new_owner, new_action_status, new_status, row['id'])
+                                )
+                                conn.commit()
+                            st.success(f"Updated escalation {row['id']}!")
+                            st.experimental_rerun()
 
 # ----------------------- Manual Parser -----------------------
 with st.expander("✍️ Manually Parse Email"):
