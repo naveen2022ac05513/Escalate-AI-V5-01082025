@@ -289,6 +289,32 @@ import sqlite3
 from datetime import datetime
 import time
 
+# Call the DB initializer early
+def initialize_database():
+    conn = sqlite3.connect("escalations.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS escalations (
+            id TEXT PRIMARY KEY,
+            customer TEXT,
+            issue TEXT,
+            date_reported TEXT,
+            rule_sentiment TEXT,
+            transformer_sentiment TEXT,
+            urgency TEXT,
+            escalated INTEGER,
+            status TEXT,
+            action_taken TEXT,
+            last_updated TEXT,
+            escalation_level INTEGER
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+initialize_database()  # <-- Ensure this is called before anything else
+
+
 def generate_new_id():
     conn = sqlite3.connect("escalations.db", check_same_thread=False)
     c = conn.cursor()
