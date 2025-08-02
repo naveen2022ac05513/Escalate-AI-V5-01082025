@@ -1,5 +1,5 @@
 streamlit
 pandas
-nltk
 python-dotenv
 vaderSentiment
+openpyxl
