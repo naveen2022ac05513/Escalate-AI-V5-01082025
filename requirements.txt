@@ -12,3 +12,4 @@ sqlalchemy
 pyodbc
 fastapi
 uvicorn
+imapclient
