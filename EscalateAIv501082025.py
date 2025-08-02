@@ -367,7 +367,7 @@ else:
         start, end = map(str, date_range)
         df = df[(df["date_reported"] >= start) & (df["date_reported"] <= end)]
 
-    # Display escalation entries
+       # Display escalation entries
     for idx, row in df.iterrows():
         with st.expander(f"{row['id']} - {row['customer']} (Rule: {row['rule_sentiment']} / Transformer: {row['transformer_sentiment']} / {row['urgency']})"):
             st.markdown(f"**Issue:** {row['issue']}")
@@ -377,5 +377,7 @@ else:
     # CSV download of filtered data
     st.download_button(
         "📥 Download Filtered Escalations (CSV)",
-        df.to_csv(index
-```
+        df.to_csv(index=False).encode(),
+        file_name="escalations_filtered.csv",
+        mime="text/csv"
+    )
