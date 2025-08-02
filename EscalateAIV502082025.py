@@ -31,11 +31,10 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
-EMAIL = os.getenv("EMAIL")
-APP_PASSWORD = os.getenv("APP_PASSWORD")
-mail = imaplib.IMAP4_SSL("imap.gmail.com")
-mail.login(EMAIL, APP_PASSWORD)
+IMAP_USER = os.getenv("EMAIL_USER")
+IMAP_PASS = os.getenv("EMAIL_PASS")
+IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
+ALERT_RECEIVER = os.getenv("ALERT_RECEIVER", IMAP_USER)
 
 mail.select("inbox")
 status, messages = mail.search(None, "ALL")  # try 'ALL' or 'UNSEEN'
