@@ -287,22 +287,29 @@ else:
 if sentiment_filter != "All":
     df = df[df["rule_sentiment"] == sentiment_filter]
 
-# 👇 Your existing code continues from here
-# For example:
-# results = process_escalations(df)
-if date_range and len(date_range) == 2:
-    start_date = date_range[0].strftime("%Y-%m-%d")
-    end_date = date_range[1].strftime("%Y-%m-%d")
-    df = df[(df["date_reported"] >= start_date) & (df["date_reported"] <= end_date)]
+# ----------------------- Manual Parser -----------------------
+with st.expander("✍️ Manually Parse Email"):
+    st.markdown("Use this form to test email parsing manually or input an email issue when IMAP fails.")
 
-if df.empty:
-    st.info("No escalations found.")
-else:
-    for _, row in df.iterrows():
-        with st.expander(f"{row['escalation_id']} - {row['customer']} ({row['rule_sentiment']}/{row['urgency']})"):
-            st.markdown(f"**Issue:** {row['issue']}")
-            st.markdown(f"**Escalated:** {'Yes' if row['escalated'] else 'No'}")
-            st.markdown(f"**Date:** {row['date_reported']}")
+    manual_email = st.text_area("Paste email body or issue here", height=200)
+    manual_sender = st.text_input("Customer Email")
+    manual_date = st.date_input("Date Reported", datetime.today())
+
+    if st.button("Parse and Log Manually"):
+        if manual_email and manual_sender:
+            rule, transformer, urgency, escalate = analyze_issue(manual_email)
+            insert_escalation({
+                "customer": manual_sender.lower(),
+                "issue": manual_email[:500],
+                "date_reported": str(manual_date),
+                "rule_sentiment": rule,
+                "transformer_sentiment": transformer,
+                "urgency": urgency,
+                "escalated": int(escalate)
+            })
+            st.success(f"✅ Manually logged escalation with urgency = {urgency}, rule sentiment = {rule}")
+        else:
+            st.error("Please provide both the issue text and customer email.")
 
     st.download_button(
         "📥 Download Filtered Escalations (CSV)",
@@ -312,37 +319,5 @@ else:
     )
     # (Everything from your original code remains unchanged above this line)
 
-# ----------------------- Manual Email Parser UI -----------------------
-def manual_email_parser_ui():
-    with st.expander("📥 Manually Parse Email", expanded=False):
-        st.markdown("If emails can't be parsed automatically, enter details below.")
-        with st.form("manual_email_form"):
-            customer = st.text_input("Sender Email (Customer)")
-            issue = st.text_area("Issue Content")
-            date_reported = st.date_input("Date Reported", value=datetime.now()).isoformat()
 
-            submitted = st.form_submit_button("Submit Manually")
-            if submitted:
-                if not customer or not issue:
-                    st.error("Both sender email and issue are required.")
-                else:
-                    rule, transformer, urgency, escalate = analyze_issue(issue)
-                    insert_escalation({
-                        "customer": customer.lower(),
-                        "issue": issue[:500],
-                        "date_reported": date_reported,
-                        "rule_sentiment": rule,
-                        "transformer_sentiment": transformer,
-                        "urgency": urgency,
-                        "escalated": int(escalate)
-                    })
-                    st.success("✅ Manual escalation logged successfully.")
-
-# ----------------------- App Launch Logic -----------------------
-if __name__ == "__main__" or __name__ == "__streamlit__":
-    st.title("📡 EscalateAI – Email Parsing Engine")
-    st.markdown("Auto-parses escalation emails every minute. If email parsing fails, use manual entry below.")
-    
-    st.button("📨 Parse Now", on_click=parse_emails)
-    manual_email_parser_ui()
 
