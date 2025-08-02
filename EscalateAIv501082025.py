@@ -355,7 +355,7 @@ for col, status in zip(kanban_cols, statuses):
 
 if st.session_state.get('needs_refresh'):
     st.session_state['needs_refresh'] = False
-    st.experimental_rerun()
+    st.rerun()
 
 # ----------------------- Manual Parser -----------------------
 with st.expander("✍️ Manually Parse Email"):
