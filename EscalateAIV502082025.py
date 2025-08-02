@@ -24,6 +24,37 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 
 from transformers import pipeline
+import imaplib
+import email
+from email.header import decode_header
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+EMAIL = os.getenv("EMAIL")
+APP_PASSWORD = os.getenv("APP_PASSWORD")
+
+mail = imaplib.IMAP4_SSL("imap.gmail.com")
+mail.login(EMAIL, APP_PASSWORD)
+
+mail.select("inbox")
+status, messages = mail.search(None, "ALL")  # try 'ALL' or 'UNSEEN'
+
+mail_ids = messages[0].split()
+print(f"Found {len(mail_ids)} emails.")
+
+for i in mail_ids[-5:]:  # check last 5 mails
+    res, msg = mail.fetch(i, "(RFC822)")
+    for response in msg:
+        if isinstance(response, tuple):
+            msg_data = email.message_from_bytes(response[1])
+            subject, encoding = decode_header(msg_data["Subject"])[0]
+            if isinstance(subject, bytes):
+                subject = subject.decode(encoding or "utf-8")
+            from_ = msg_data.get("From")
+            print("From:", from_)
+            print("Subject:", subject)
 
 # ----------------------- Paths & ENV -----------------------
 APP_DIR = Path(__file__).resolve().parent
