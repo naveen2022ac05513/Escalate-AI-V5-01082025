@@ -1,10 +1,7 @@
 streamlit
 pandas
+numpy
 python-dotenv
-imapclient
-beautifulsoup4
-apscheduler
-transformers
-torch
-openpyxl
 textblob
+openpyxl
+sqlalchemy
