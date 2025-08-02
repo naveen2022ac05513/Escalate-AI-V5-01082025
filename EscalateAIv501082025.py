@@ -122,18 +122,27 @@ def parse_emails():
     try:
         with IMAPClient(IMAP_SERVER) as client:
             client.login(IMAP_USER, IMAP_PASS)
-            client.select_folder("INBOX", readonly=True)
+            client.select_folder("INBOX")
             messages = client.search(["UNSEEN"])
-            for uid, msg_data in client.fetch(messages, ["RFC822"]).items():
-                msg = email.message_from_bytes(msg_data[b"RFC822"])
+            for uid, msg_data in client.fetch(messages, ["BODY[]"]).items():
+                raw_email = msg_data[b"BODY[]"]
+                msg = email.message_from_bytes(raw_email)
                 from_email = email.utils.parseaddr(msg.get("From"))[1].lower()
                 date = msg.get("Date") or datetime.utcnow().isoformat()
+                body = ""
                 if msg.is_multipart():
-                    body = next((part.get_payload(decode=True).decode(errors='ignore') for part in msg.walk() if part.get_content_type() == "text/plain"), "")
+                    for part in msg.walk():
+                        ctype = part.get_content_type()
+                        cdispo = str(part.get("Content-Disposition"))
+                        if ctype == "text/plain" and "attachment" not in cdispo:
+                            try:
+                                body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
+                                break
+                            except:
+                                continue
                 else:
-                    body = msg.get_payload(decode=True).decode(errors='ignore')
-                soup = BeautifulSoup(body, "html.parser")
-                clean_body = soup.get_text()
+                    body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
+                clean_body = BeautifulSoup(body, "html.parser").get_text()
                 rule, transformer, urgency, escalate = analyze_issue(clean_body)
                 insert_escalation({
                     "customer": from_email,
@@ -165,7 +174,6 @@ if 'email_scheduler' not in st.session_state:
     schedule_email_fetch()
     st.session_state['scheduler_status'] = True
     st.session_state['email_scheduler'] = True
-
 
 
 # Streamlit UI
