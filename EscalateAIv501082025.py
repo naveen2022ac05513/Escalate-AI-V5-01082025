@@ -206,6 +206,9 @@ with st.sidebar:
 
     st.markdown("---")
 
+    if st.button("📬 Parse Emails Manually"):
+    parse_emails()
+
     st.header("Upload Excel")
     uploaded_file = st.file_uploader("Upload Excel with columns: customer, issue, date_reported (optional)", type=["xlsx"])
     if uploaded_file:
