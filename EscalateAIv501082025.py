@@ -122,7 +122,7 @@ def parse_emails():
     with IMAPClient(IMAP_SERVER) as client:
         client.login(IMAP_USER, IMAP_PASS)
         client.select_folder("INBOX", readonly=True)
-        messages = client.search(["UNSEEN"])
+      messages = client.search(["ALL"])
         for uid, msg_data in client.fetch(messages, ["RFC822"]).items():
             msg = email.message_from_bytes(msg_data[b"RFC822"])
             from_email = email.utils.parseaddr(msg.get("From"))[1].lower()
