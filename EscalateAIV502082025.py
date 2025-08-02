@@ -373,8 +373,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-  st.sidebar.subheader("📥 Bulk Upload from Excel")
-
+st.sidebar.subheader("📥 Bulk Upload from Excel")
 uploaded_file = st.sidebar.file_uploader("Upload Escalation Excel", type=["xlsx"])
 
 if uploaded_file:
