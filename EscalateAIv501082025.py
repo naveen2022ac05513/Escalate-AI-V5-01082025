@@ -310,3 +310,39 @@ else:
         file_name="escalations_filtered.csv",
         mime="text/csv"
     )
+    # (Everything from your original code remains unchanged above this line)
+
+# ----------------------- Manual Email Parser UI -----------------------
+def manual_email_parser_ui():
+    with st.expander("📥 Manually Parse Email", expanded=False):
+        st.markdown("If emails can't be parsed automatically, enter details below.")
+        with st.form("manual_email_form"):
+            customer = st.text_input("Sender Email (Customer)")
+            issue = st.text_area("Issue Content")
+            date_reported = st.date_input("Date Reported", value=datetime.now()).isoformat()
+
+            submitted = st.form_submit_button("Submit Manually")
+            if submitted:
+                if not customer or not issue:
+                    st.error("Both sender email and issue are required.")
+                else:
+                    rule, transformer, urgency, escalate = analyze_issue(issue)
+                    insert_escalation({
+                        "customer": customer.lower(),
+                        "issue": issue[:500],
+                        "date_reported": date_reported,
+                        "rule_sentiment": rule,
+                        "transformer_sentiment": transformer,
+                        "urgency": urgency,
+                        "escalated": int(escalate)
+                    })
+                    st.success("✅ Manual escalation logged successfully.")
+
+# ----------------------- App Launch Logic -----------------------
+if __name__ == "__main__" or __name__ == "__streamlit__":
+    st.title("📡 EscalateAI – Email Parsing Engine")
+    st.markdown("Auto-parses escalation emails every minute. If email parsing fails, use manual entry below.")
+    
+    st.button("📨 Parse Now", on_click=parse_emails)
+    manual_email_parser_ui()
+
