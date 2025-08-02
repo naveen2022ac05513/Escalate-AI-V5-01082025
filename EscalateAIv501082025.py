@@ -116,50 +116,39 @@ def insert_escalation(data: dict):
         if data["urgency"] == "High":
             send_alert_email(f"Escalation ID: {data['escalation_id']}\nCustomer: {data['customer']}\nIssue: {data['issue'][:200]}")
 
+# ----------------------- Email Parser -----------------------
 def parse_emails():
     parsed_count = 0
-    with IMAPClient(IMAP_SERVER) as client:
-        client.login(IMAP_USER, IMAP_PASS)
-        logging.info(f"🔐 Logged in as {IMAP_USER}")
-        
-        folders = client.list_folders()
-        logging.info(f"📂 Available folders: {[f[2] for f in folders]}")
-        
-        client.select_folder("INBOX", readonly=True)
-        messages = client.search(["UNSEEN"])
-        logging.info(f"📨 Unseen messages: {messages}")
-        
-        for uid, msg_data in client.fetch(messages, ["RFC822"]).items():
-            msg = email.message_from_bytes(msg_data[b"RFC822"])
-            from_email = email.utils.parseaddr(msg.get("From"))[1].lower()
-            date = msg.get("Date") or datetime.utcnow().isoformat()
-            
-            # Extract body
-            if msg.is_multipart():
-                body = next((part.get_payload(decode=True).decode(errors='ignore') 
-                             for part in msg.walk() 
-                             if part.get_content_type() == "text/plain"), "")
-            else:
-                body = msg.get_payload(decode=True).decode(errors='ignore')
-            
-            soup = BeautifulSoup(body, "html.parser")
-            clean_body = soup.get_text()
-
-            # Sentiment & Escalation
-            rule, transformer, urgency, escalate = analyze_issue(clean_body)
-            insert_escalation({
-                "customer": from_email,
-                "issue": clean_body[:500],
-                "date_reported": date,
-                "rule_sentiment": rule,
-                "transformer_sentiment": transformer,
-                "urgency": urgency,
-                "escalated": int(escalate)
-            })
-
-            logging.info(f"✅ Processed: From={from_email}, Rule={rule}, Transformer={transformer}, Urgency={urgency}, Escalated={escalate}")
-            parsed_count += 1
-
+    try:
+        with IMAPClient(IMAP_SERVER) as client:
+            client.login(IMAP_USER, IMAP_PASS)
+            client.select_folder("INBOX", readonly=True)
+            messages = client.search(["UNSEEN"])
+            for uid, msg_data in client.fetch(messages, ["RFC822"]).items():
+                msg = email.message_from_bytes(msg_data[b"RFC822"])
+                from_email = email.utils.parseaddr(msg.get("From"))[1].lower()
+                date = msg.get("Date") or datetime.utcnow().isoformat()
+                if msg.is_multipart():
+                    body = next((part.get_payload(decode=True).decode(errors='ignore') for part in msg.walk() if part.get_content_type() == "text/plain"), "")
+                else:
+                    body = msg.get_payload(decode=True).decode(errors='ignore')
+                soup = BeautifulSoup(body, "html.parser")
+                clean_body = soup.get_text()
+                rule, transformer, urgency, escalate = analyze_issue(clean_body)
+                insert_escalation({
+                    "customer": from_email,
+                    "issue": clean_body[:500],
+                    "date_reported": date,
+                    "rule_sentiment": rule,
+                    "transformer_sentiment": transformer,
+                    "urgency": urgency,
+                    "escalated": int(escalate)
+                })
+                parsed_count += 1
+                logging.info(f"🔔 Escalation from {from_email} logged with rule={rule}, transformer={transformer}, urgency={urgency}.")
+    except Exception as e:
+        logging.error(f"❌ Failed to fetch emails: {e}")
+        st.error("❌ Failed to connect to email server. Check credentials or network.")
     if parsed_count:
         st.success(f"✅ Parsed and logged {parsed_count} new emails.")
     else:
@@ -176,6 +165,7 @@ if 'email_scheduler' not in st.session_state:
     schedule_email_fetch()
     st.session_state['scheduler_status'] = True
     st.session_state['email_scheduler'] = True
+
 
 
 # Streamlit UI
