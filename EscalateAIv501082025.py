@@ -1,204 +1,167 @@
-import os
-import sqlite3
+# ==============================================================
+# EscalateAI – Escalation Management Tool with Email Parsing
+# --------------------------------------------------------------
+# • Parses emails from inbox configured in .env
+# • Logs escalations directly into database every minute
+# • Predicts sentiment (rule-based + transformer), urgency, and risk in real-time
+# • Streamlit dashboard for escalation tracking
+# • Supports manual entry, Excel upload, and CSV download
+# • Logs scheduler activity and allows pause/resume controls
+# • Notifies when new escalation is added
+# • Filters by urgency, sentiment, date, escalation status
+# --------------------------------------------------------------
+# Author: Naveen Gandham • v1.5.0 • August 2025
+# ==============================================================
+
+import os, re, sqlite3, uuid, email
+from email.mime.text import MIMEText
+from datetime import datetime
+from pathlib import Path
+from typing import Tuple
+
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 from imapclient import IMAPClient
-import email
 from bs4 import BeautifulSoup
-from datetime import datetime
-from transformers import pipeline
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 import smtplib
-from email.mime.text import MIMEText
-from dotenv import load_dotenv
-from pathlib import Path
 
-# Load env variables
+from transformers import pipeline
+
+# ----------------------- Paths & ENV -----------------------
+APP_DIR   = Path(__file__).resolve().parent
+DATA_DIR  = APP_DIR / "data"; DATA_DIR.mkdir(exist_ok=True)
+MODEL_DIR = APP_DIR / "models"; MODEL_DIR.mkdir(exist_ok=True)
+DB_PATH   = DATA_DIR / "escalateai.db"
+
 load_dotenv()
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
-EMAIL_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
-ALERT_RECEIVER = os.getenv("ALERT_RECEIVER", EMAIL_USER)
-SMTP_USER = os.getenv("SMTP_USER", EMAIL_USER)
-SMTP_PASS = os.getenv("SMTP_PASS", EMAIL_PASS)
+IMAP_USER   = os.getenv("EMAIL_USER")
+IMAP_PASS   = os.getenv("EMAIL_PASS")
+IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
+ALERT_RECEIVER = os.getenv("ALERT_RECEIVER", IMAP_USER)
 
-# Database file
-DB_PATH = "escalations.db"
-
-# Logging setup
-logfile = Path("logs")
-logfile.mkdir(exist_ok=True)
+# ----------------------- Logging -----------------------
+logfile = Path("logs"); logfile.mkdir(exist_ok=True)
 logging.basicConfig(
     filename=logfile / "escalateai.log",
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Create DB table if not exists
-CREATE_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS escalations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    customer TEXT,
-    issue TEXT,
-    sentiment TEXT,
-    urgency TEXT,
-    date_reported TEXT,
-    escalated INTEGER,
-    created_at TEXT,
-    rule_sentiment TEXT,
-    transformer_sentiment TEXT
-);
-"""
+# ----------------------- Sentiment Models -----------------------
+NEG_WORDS = [r"\b(delay|issue|failure|dissatisfaction|unacceptable|complaint|escalation|critical|risk|faulty|bad|poor|slow|crash|urgent|asap|immediately)\b"]
 
-# Initialize DB
-with sqlite3.connect(DB_PATH) as conn:
-    conn.execute(CREATE_TABLE_SQL)
-
-# Load sentiment analysis pipeline (HuggingFace transformers)
 @st.cache_resource(show_spinner=False)
-def load_sentiment_model():
-    import torch  # Make sure torch installed
+def load_transformer_model():
     return pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 
-sentiment_analyzer = load_sentiment_model()
+transformer_model = load_transformer_model()
 
-# Simple rule-based negative words list
-NEGATIVE_WORDS = set([
-    "not working", "issue", "error", "fail", "problem", "delay", "unable", "complain",
-    "bad", "poor", "broken", "late", "slow", "crash", "downtime", "urgent", "critical"
-])
+def rule_sent(text: str) -> str:
+    return "Negative" if any(re.search(p, text, re.I) for p in NEG_WORDS) else "Positive"
 
-# Insert escalation into DB
-def insert_escalation(data: dict):
-    with sqlite3.connect(DB_PATH) as conn:
-        try:
-            cols = ", ".join(data.keys())
-            placeholders = ", ".join("?" for _ in data)
-            vals = tuple(data.values())
-            conn.execute(f"INSERT INTO escalations ({cols}) VALUES ({placeholders})", vals)
-            conn.commit()
-            logging.info(f"Inserted escalation: {data['customer']}, issue: {data['issue'][:30]}")
-            # Send alert if high risk
-            if data.get("sentiment") == "NEGATIVE" and data.get("urgency") == "High":
-                send_alert_email(data)
-        except Exception as e:
-            logging.error(f"Insert escalation error: {e}")
-
-# Send email alert
-def send_alert_email(data):
+def transformer_sent(text: str) -> str:
     try:
-        issue_summary = (
-            f"Customer: {data['customer']}\n"
-            f"Issue: {data['issue']}\n"
-            f"Urgency: {data['urgency']}\n"
-            f"Sentiment: {data['sentiment']}"
-        )
+        result = transformer_model(text[:512])[0]
+        return "Negative" if result['label'].upper() == "NEGATIVE" else "Positive"
+    except:
+        return "Positive"
+
+def analyze_issue(text: str) -> Tuple[str, str, str, bool]:
+    rule = rule_sent(text)
+    transformer = transformer_sent(text)
+    urgency = "High" if any(k in text.lower() for k in ["urgent", "immediate", "critical", "asap"]) else "Low"
+    escalate = (rule == "Negative" or transformer == "Negative") and urgency == "High"
+    return rule, transformer, urgency, escalate
+
+# ----------------------- Notification -----------------------
+def send_alert_email(issue_summary):
+    try:
         msg = MIMEText(issue_summary)
         msg["Subject"] = "🚨 High-Risk Escalation Detected"
-        msg["From"] = SMTP_USER
+        msg["From"] = IMAP_USER
         msg["To"] = ALERT_RECEIVER
-
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_USER, ALERT_RECEIVER, msg.as_string())
-        logging.info(f"Alert email sent to {ALERT_RECEIVER}")
+            server.login(IMAP_USER, IMAP_PASS)
+            server.sendmail(IMAP_USER, ALERT_RECEIVER, msg.as_string())
+        logging.info(f"📧 Alert email sent to {ALERT_RECEIVER}")
     except Exception as e:
-        logging.error(f"Failed to send alert email: {e}")
+        logging.error(f"❌ Failed to send alert: {e}")
 
-# Analyze text for sentiment & urgency
-def analyze_issue(issue_text):
-    # Rule-based negative detection
-    rule_neg = any(kw in issue_text.lower() for kw in NEGATIVE_WORDS)
-    rule_sentiment = "NEGATIVE" if rule_neg else "POSITIVE"
+# ----------------------- Insert -----------------------
+def insert_escalation(data: dict):
+    data["escalation_id"] = f"SESICE-{str(uuid.uuid4())[:8].upper()}"
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS escalations (
+                escalation_id TEXT PRIMARY KEY,
+                customer TEXT,
+                issue TEXT,
+                date_reported TEXT,
+                rule_sentiment TEXT,
+                transformer_sentiment TEXT,
+                urgency TEXT,
+                escalated INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cols = ",".join(data.keys())
+        vals = tuple(data.values())
+        placeholders = ",".join(["?"] * len(data))
+        conn.execute(f"INSERT INTO escalations ({cols}) VALUES ({placeholders})", vals)
+        conn.commit()
+    if data["rule_sentiment"] == "Negative" or data["transformer_sentiment"] == "Negative":
+        if data["urgency"] == "High":
+            send_alert_email(f"Escalation ID: {data['escalation_id']}\nCustomer: {data['customer']}\nIssue: {data['issue'][:200]}")
 
-    # Transformer sentiment
-    try:
-        result = sentiment_analyzer(issue_text[:512])[0]  # truncate long text
-        transformer_sentiment = "NEGATIVE" if result['label'].upper() == "NEGATIVE" else "POSITIVE"
-    except Exception as e:
-        logging.error(f"Sentiment analysis error: {e}")
-        transformer_sentiment = "POSITIVE"
+# ----------------------- Email Parser -----------------------
+def parse_emails():
+    parsed_count = 0
+    with IMAPClient(IMAP_SERVER) as client:
+        client.login(IMAP_USER, IMAP_PASS)
+        client.select_folder("INBOX", readonly=True)
+        messages = client.search(["UNSEEN"])
+        for uid, msg_data in client.fetch(messages, ["RFC822"]).items():
+            msg = email.message_from_bytes(msg_data[b"RFC822"])
+            from_email = email.utils.parseaddr(msg.get("From"))[1].lower()
+            date = msg.get("Date") or datetime.utcnow().isoformat()
+            if msg.is_multipart():
+                body = next((part.get_payload(decode=True).decode(errors='ignore') for part in msg.walk() if part.get_content_type() == "text/plain"), "")
+            else:
+                body = msg.get_payload(decode=True).decode(errors='ignore')
+            soup = BeautifulSoup(body, "html.parser")
+            clean_body = soup.get_text()
+            rule, transformer, urgency, escalate = analyze_issue(clean_body)
+            insert_escalation({
+                "customer": from_email,
+                "issue": clean_body[:500],
+                "date_reported": date,
+                "rule_sentiment": rule,
+                "transformer_sentiment": transformer,
+                "urgency": urgency,
+                "escalated": int(escalate)
+            })
+            parsed_count += 1
+            logging.info(f"🔔 Escalation from {from_email} logged with rule={rule}, transformer={transformer}, urgency={urgency}.")
+    if parsed_count:
+        st.success(f"✅ Parsed and logged {parsed_count} new emails.")
+    else:
+        st.info("No new emails found.")
 
-    # Urgency detection by keywords
-    urgency = "High" if any(w in issue_text.lower() for w in ["urgent", "immediately", "asap", "critical", "fail"]) else "Low"
+# ----------------------- Scheduler -----------------------
+def schedule_email_fetch():
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(parse_emails, 'interval', minutes=1, id='email_job', replace_existing=True)
+    scheduler.start()
+    logging.info("✅ Email scheduler started and running every 1 minute")
 
-    # Decide escalated if either sentiment negative or urgency high
-    escalated = 1 if rule_sentiment == "NEGATIVE" or transformer_sentiment == "NEGATIVE" or urgency == "High" else 0
+if 'email_scheduler' not in st.session_state:
+    schedule_email_fetch()
+    st.session_state['scheduler_status'] = True
+    st.session_state['email_scheduler'] = True
 
-    return rule_sentiment, transformer_sentiment, urgency, escalated
-
-# Fetch unread emails from Gmail via IMAP
-def fetch_unread_emails():
-    new_cases = 0
-    try:
-        with IMAPClient(EMAIL_SERVER) as client:
-            client.login(EMAIL_USER, EMAIL_PASS)
-            client.select_folder('INBOX')
-            messages = client.search(['UNSEEN'])
-            if not messages:
-                return 0
-
-            response = client.fetch(messages, ['RFC822'])
-            for uid, data in response.items():
-                msg = email.message_from_bytes(data[b'RFC822'])
-                subject = msg.get('Subject', '')
-                from_ = msg.get('From', '')
-                date_ = msg.get('Date', '')
-                body = ""
-
-                if msg.is_multipart():
-                    for part in msg.walk():
-                        ctype = part.get_content_type()
-                        cdispo = str(part.get('Content-Disposition'))
-
-                        if ctype == 'text/plain' and 'attachment' not in cdispo:
-                            body = part.get_payload(decode=True).decode(errors='ignore')
-                            break
-                else:
-                    body = msg.get_payload(decode=True).decode(errors='ignore')
-
-                # Extract customer (from email)
-                customer = from_
-                issue = body.strip()[:1000]
-
-                # Analyze issue text
-                rule_sentiment, transformer_sentiment, urgency, escalated = analyze_issue(issue)
-
-                # Insert to DB
-                insert_escalation({
-                    "customer": customer,
-                    "issue": issue,
-                    "sentiment": transformer_sentiment,
-                    "urgency": urgency,
-                    "date_reported": date_ if date_ else datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "escalated": escalated,
-                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "rule_sentiment": rule_sentiment,
-                    "transformer_sentiment": transformer_sentiment
-                })
-
-                new_cases += 1
-            logging.info(f"Fetched {new_cases} new emails.")
-    except Exception as e:
-        logging.error(f"Email fetch error: {e}")
-    return new_cases
-
-# Scheduler setup for periodic email fetch
-scheduler = BackgroundScheduler()
-scheduler.start()
-
-# Control flags for pause/resume
-if "fetch_paused" not in st.session_state:
-    st.session_state.fetch_paused = False
-
-def scheduled_fetch():
-    if not st.session_state.fetch_paused:
-        count = fetch_unread_emails()
-        if count > 0:
-            st.experimental_rerun()
-
-scheduler.add_job(scheduled_fetch, "interval", seconds=60)
 
 # Streamlit UI
 st.title("🚀 EscalateAI - Escalation Management")
