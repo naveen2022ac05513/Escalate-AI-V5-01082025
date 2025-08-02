@@ -1,6 +1,6 @@
-# =============================================================
+# ==============================================================
 # EscalateAI – Escalation Management Tool with Email Parsing
-# -------------------------------------------------------------
+# --------------------------------------------------------------
 # • Parses emails from inbox configured in .env
 # • Logs escalations directly into database every minute
 # • Predicts sentiment (rule-based + transformer), urgency, and risk in real-time
@@ -9,9 +9,9 @@
 # • Logs scheduler activity and allows pause/resume controls
 # • Notifies when new escalation is added
 # • Filters by urgency, sentiment, date, escalation status
-# -------------------------------------------------------------
+# --------------------------------------------------------------
 # Author: Naveen Gandham • v1.5.0 • August 2025
-# =============================================================
+# ==============================================================
 
 import os, re, sqlite3, email
 from email.mime.text import MIMEText
@@ -49,6 +49,28 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
+# ----------------------- Initialize Database -----------------------
+def initialize_db():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS escalations (
+                id TEXT PRIMARY KEY,
+                customer TEXT,
+                issue TEXT,
+                date_reported TEXT,
+                rule_sentiment TEXT,
+                transformer_sentiment TEXT,
+                urgency TEXT,
+                escalated INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+
+initialize_db()
 
 # ----------------------- Sentiment Models -----------------------
 NEG_WORDS = [r"\b(delay|issue|failure|dissatisfaction|unacceptable|complaint|escalation|critical|risk|faulty|bad|poor|slow|crash|urgent|asap|immediately)\b"]
@@ -93,23 +115,7 @@ def send_alert_email(issue_summary):
 # ----------------------- Insert with Sequential ID -----------------------
 def insert_escalation(data: dict):
     with sqlite3.connect(DB_PATH) as conn:
-        # Create table if not exists
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS escalations (
-                id TEXT PRIMARY KEY,
-                customer TEXT,
-                issue TEXT,
-                date_reported TEXT,
-                rule_sentiment TEXT,
-                transformer_sentiment TEXT,
-                urgency TEXT,
-                escalated INTEGER,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        # Find max numeric escalation id
+        # Table is guaranteed to exist from initialize_db()
         cur = conn.execute(
             "SELECT MAX(CAST(SUBSTR(id, 7) AS INTEGER)) FROM escalations WHERE id LIKE 'SESICE-%'"
         )
@@ -119,7 +125,6 @@ def insert_escalation(data: dict):
         else:
             next_num = max_num + 1
 
-        # Generate new escalation id
         new_id = f"SESICE-{next_num:06d}"
         data["id"] = new_id
 
@@ -130,7 +135,6 @@ def insert_escalation(data: dict):
         conn.execute(f"INSERT INTO escalations ({cols}) VALUES ({placeholders})", vals)
         conn.commit()
 
-    # Send alert if needed
     if data["rule_sentiment"] == "Negative" or data["transformer_sentiment"] == "Negative":
         if data["urgency"] == "High":
             send_alert_email(
@@ -269,7 +273,6 @@ with st.sidebar:
 # Load escalations for dashboard
 with sqlite3.connect(DB_PATH) as conn:
     try:
-        # Fixed query - removed datetime() call
         df = pd.read_sql("SELECT * FROM escalations ORDER BY created_at DESC", conn)
     except Exception as e:
         st.error(f"Database read error: {e}")
@@ -278,44 +281,46 @@ with sqlite3.connect(DB_PATH) as conn:
 # Filters
 st.header("Escalations Dashboard")
 
-filter_choice = st.radio("Escalation Status:", ["All", "Escalated Only", "Non-Escalated"])
-urgency_filter = st.selectbox("Urgency:", ["All"] + sorted(df["urgency"].unique()) if not df.empty else [])
-sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["rule_sentiment"].unique()) if not df.empty and "rule_sentiment" in df.columns else ["All"])
-date_range = st.date_input("Date Range:", [])
-
-if filter_choice == "Escalated Only":
-    df = df[df["escalated"] == 1]
-elif filter_choice == "Non-Escalated":
-    df = df[df["escalated"] == 0]
-
-if urgency_filter != "All":
-    df = df[df["urgency"] == urgency_filter]
-
-if sentiment_filter != "All" and "rule_sentiment" in df.columns:
-    df = df[df["rule_sentiment"] == sentiment_filter]
-
-if date_range and len(date_range) == 2:
-    start_date = date_range[0].strftime("%Y-%m-%d")
-    end_date = date_range[1].strftime("%Y-%m-%d")
-    df = df[(df["date_reported"] >= start_date) & (df["date_reported"] <= end_date)]
-
 if df.empty:
     st.info("No escalations found.")
 else:
-    for _, row in df.iterrows():
-        with st.expander(f"{row['id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
-            st.markdown(f"**Issue:** {row['issue']}")
-            st.markdown(f"**Escalated:** {'Yes' if row['escalated'] else 'No'}")
-            st.markdown(f"**Date:** {row['date_reported']}")
+    filter_choice = st.radio("Escalation Status:", ["All", "Escalated Only", "Non-Escalated"])
+    urgency_filter = st.selectbox("Urgency:", ["All"] + sorted(df["urgency"].unique()) if "urgency" in df.columns else [])
+    sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["rule_sentiment"].unique()) if "rule_sentiment" in df.columns else ["All"])
+    date_range = st.date_input("Date Range:", [])
 
-    # Unique key added to avoid duplicate element id error
-    st.download_button(
-        key="download_filtered_escalations",
-        label="📥 Download Filtered Escalations (CSV)",
-        data=df.to_csv(index=False).encode(),
-        file_name="escalations_filtered.csv",
-        mime="text/csv"
-    )
+    if filter_choice == "Escalated Only" and "escalated" in df.columns:
+        df = df[df["escalated"] == 1]
+    elif filter_choice == "Non-Escalated" and "escalated" in df.columns:
+        df = df[df["escalated"] == 0]
+
+    if urgency_filter != "All" and "urgency" in df.columns:
+        df = df[df["urgency"] == urgency_filter]
+
+    if sentiment_filter != "All" and "rule_sentiment" in df.columns:
+        df = df[df["rule_sentiment"] == sentiment_filter]
+
+    if date_range and len(date_range) == 2 and "date_reported" in df.columns:
+        start_date = date_range[0].strftime("%Y-%m-%d")
+        end_date = date_range[1].strftime("%Y-%m-%d")
+        df = df[(df["date_reported"] >= start_date) & (df["date_reported"] <= end_date)]
+
+    if df.empty:
+        st.info("No escalations found with selected filters.")
+    else:
+        for _, row in df.iterrows():
+            with st.expander(f"{row['id']} - {row['customer']} ({row.get('rule_sentiment', '')}/{row['urgency']})"):
+                st.markdown(f"**Issue:** {row['issue']}")
+                st.markdown(f"**Escalated:** {'Yes' if row.get('escalated', 0) else 'No'}")
+                st.markdown(f"**Date:** {row['date_reported']}")
+
+        st.download_button(
+            key="download_filtered_escalations",
+            label="📥 Download Filtered Escalations (CSV)",
+            data=df.to_csv(index=False).encode(),
+            file_name="escalations_filtered.csv",
+            mime="text/csv"
+        )
 
 # ----------------------- Manual Parser -----------------------
 with st.expander("✍️ Manually Parse Email"):
@@ -344,7 +349,7 @@ with st.expander("✍️ Manually Parse Email"):
     st.download_button(
         key="download_manual_filtered_escalations",
         label="📥 Download Filtered Escalations (CSV)",
-        data=df.to_csv(index=False).encode(),
+        data=df.to_csv(index=False).encode() if not df.empty else b"",
         file_name="escalations_filtered.csv",
         mime="text/csv"
     )
