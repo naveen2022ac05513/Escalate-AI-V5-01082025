@@ -1,7 +1,4 @@
 streamlit
 pandas
-numpy
+nltk
 python-dotenv
-textblob
-openpyxl
-sqlalchemy
