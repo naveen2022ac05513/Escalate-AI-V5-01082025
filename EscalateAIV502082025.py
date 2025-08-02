@@ -188,12 +188,14 @@ def fetch_unseen_emails():
 
 def analyze_and_log_emails(emails: List[Dict]):
     count = 0
+    new_escalations = []
     for email_data in emails:
         sentiment_rule = rule_sentiment(email_data["issue"])
         sentiment_trans = transformer_sentiment(email_data["issue"])
         # If either says Negative, consider Negative
         sentiment = "Negative" if "Negative" in [sentiment_rule, sentiment_trans] else "Positive"
         priority = determine_priority(email_data["issue"])
+
         inserted = insert_escalation({
             "customer": email_data["customer"],
             "issue": email_data["issue"],
@@ -203,7 +205,22 @@ def analyze_and_log_emails(emails: List[Dict]):
         })
         if inserted:
             count += 1
+            new_escalations.append(email_data)
+    # Create Excel file for all escalations on each fetch
+    create_excel_file()
     return count
+
+def create_excel_file():
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            df = pd.read_sql("SELECT * FROM escalations ORDER BY last_updated DESC", conn)
+        if not df.empty:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"escalations_{timestamp}.xlsx"
+            df.to_excel(filename, index=False)
+            logging.info(f"Excel file created: {filename}")
+    except Exception as e:
+        logging.error(f"Failed to create Excel file: {e}")
 
 def escalate_overdue_cases():
     try:
@@ -242,12 +259,34 @@ scheduler.start()
 # Streamlit UI starts here
 st.title("🚀 EscalateAI - AI-driven Escalation Management")
 
-# Button to manually fetch and log new emails
-if st.button("🔄 Fetch New Emails"):
-    st.info("Fetching new emails...")
-    emails = fetch_unseen_emails()
-    count = analyze_and_log_emails(emails)
-    st.success(f"Fetched and logged {count} new escalation(s).")
+# Manual escalation entry form
+st.header("✍️ Manually Add Escalation")
+with st.form("manual_form"):
+    cust_email = st.text_input("Customer Email")
+    issue_text = st.text_area("Issue Description")
+    submit_manual = st.form_submit_button("Add Escalation")
+
+    if submit_manual:
+        if cust_email.strip() == "" or issue_text.strip() == "":
+            st.error("Please enter both customer email and issue description.")
+        else:
+            sentiment_rule = rule_sentiment(issue_text)
+            sentiment_trans = transformer_sentiment(issue_text)
+            sentiment = "Negative" if "Negative" in [sentiment_rule, sentiment_trans] else "Positive"
+            priority = determine_priority(issue_text)
+
+            inserted = insert_escalation({
+                "customer": cust_email.lower(),
+                "issue": issue_text.strip()[:1000],
+                "date_reported": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "sentiment": sentiment,
+                "priority": priority
+            })
+            if inserted:
+                st.success("Escalation logged successfully.")
+                st.experimental_rerun()
+            else:
+                st.warning("Duplicate escalation found, not added.")
 
 # Load data from DB for display
 def load_escalations_df():
@@ -329,38 +368,11 @@ def render_kanban():
 
 render_kanban()
 
-# Manual escalation entry form
-st.header("✍️ Manually Add Escalation")
-with st.form("manual_form"):
-    cust_email = st.text_input("Customer Email")
-    issue_text = st.text_area("Issue Description")
-    submit_manual = st.form_submit_button("Add Escalation")
-
-    if submit_manual:
-        if cust_email.strip() == "" or issue_text.strip() == "":
-            st.error("Please enter both customer email and issue description.")
-        else:
-            sentiment_rule = rule_sentiment(issue_text)
-            sentiment_trans = transformer_sentiment(issue_text)
-            sentiment = "Negative" if "Negative" in [sentiment_rule, sentiment_trans] else "Positive"
-            priority = determine_priority(issue_text)
-
-            inserted = insert_escalation({
-                "customer": cust_email.lower(),
-                "issue": issue_text.strip()[:1000],
-                "date_reported": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "sentiment": sentiment,
-                "priority": priority
-            })
-            if inserted:
-                st.success("Escalation logged successfully.")
-                st.experimental_rerun()
-            else:
-                st.warning("Duplicate escalation found, not added.")
-
 # Export escalations to Excel button
 if not df.empty:
-    excel_data = df.to_excel(index=False)
+    with sqlite3.connect(DB_PATH) as conn:
+        df_for_export = pd.read_sql("SELECT * FROM escalations ORDER BY last_updated DESC", conn)
+    excel_data = df_for_export.to_excel(index=False)
     st.download_button(
         label="📥 Download Escalations as Excel",
         data=excel_data,
@@ -373,4 +385,3 @@ else:
 # Shutdown scheduler gracefully on exit (only works if app restarted manually)
 import atexit
 atexit.register(lambda: scheduler.shutdown())
-
