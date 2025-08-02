@@ -324,11 +324,12 @@ with st.sidebar:
     if uploaded_file:
         try:
             df_upload = pd.read_excel(uploaded_file)
-            for idx, row in df_upload.iterrows():
-                cust = row.get("customer", "Unknown")
-                issue = str(row.get("issue", ""))
-                date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                rs, ts, urgency, escalated = analyze_issue(issue)
+              for idx, row in df_upload.iterrows():
+            cust = row.get("customer", "Unknown")
+            issue = str(row.get("issue", ""))
+            date_reported = row.get("date_reported", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            rs, ts, urgency, escalated = analyze_issue(issue)
+            try:
                 insert_escalation({
                     "customer": cust,
                     "issue": issue,
@@ -338,9 +339,11 @@ with st.sidebar:
                     "urgency": urgency,
                     "escalated": int(escalated),
                 })
-            st.success("Escalations imported successfully!")
-        except Exception as e:
-            st.error(f"Failed to process file: {e}")
+            except sqlite3.IntegrityError as e:
+                st.error(f"Duplicate ID error while inserting row {idx + 1}: {e}")
+                # Optionally, skip or break here
+            time.sleep(0.1)  # wait 100 ms between inserts to reduce race condition
+
 
 # Load escalations for dashboard
 with sqlite3.connect(DB_PATH) as conn:
