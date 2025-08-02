@@ -10,12 +10,12 @@ import re
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
-EMAIL = os.getenv("GMAIL_USER")
-APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
-IMAP_SERVER = os.getenv("GMAIL_SERVER", "imap.gmail.com")
+EMAIL = os.getenv("EMAIL_USER")
+APP_PASSWORD = os.getenv("EMAIL_PASS")
+IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
 
 NEGATIVE_KEYWORDS = [
     # Technical Failures & Product Malfunction
@@ -35,11 +35,11 @@ NEGATIVE_KEYWORDS = [
     "terminate", "penalty"
 ]
 
-# Connect to DB (create if not exists)
+# Connect to SQLite database (creates if not exists)
 conn = sqlite3.connect("escalations.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# Create table if not exists
+# Create escalations table if it doesn't exist
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS escalations (
     escalation_id TEXT PRIMARY KEY,
@@ -124,48 +124,30 @@ def fetch_gmail_emails():
         return []
 
 def analyze_issue(issue_text):
-    # Lowercase
     text_lower = issue_text.lower()
-
-    # Sentiment using VADER
     vs = analyzer.polarity_scores(issue_text)
     sentiment = "Positive" if vs["compound"] >= 0 else "Negative"
-
-    # Count how many negative keywords appear
     neg_count = sum(1 for kw in NEGATIVE_KEYWORDS if kw in text_lower)
-
-    # Priority: High if negative sentiment AND 2 or more neg keywords, else Low
     priority = "High" if sentiment == "Negative" and neg_count >= 2 else "Low"
-
-    # Escalation flag 1 if high priority, else 0
     escalation_flag = 1 if priority == "High" else 0
-
     return sentiment, priority, escalation_flag
 
 def save_emails_to_db(emails):
-    # Fetch max count to generate escalation IDs
     cursor.execute("SELECT COUNT(*) FROM escalations")
     count = cursor.fetchone()[0]
-
     new_entries = 0
     for e in emails:
-        # Check duplicate by customer + issue text
         cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (e['customer'], e['issue'][:500]))
         if cursor.fetchone():
-            continue  # skip duplicate
-
+            continue
         count += 1
         esc_id = f"SESICE-{count+250000}"
-
         sentiment, priority, escalation_flag = analyze_issue(e['issue'])
-
         cursor.execute("""
             INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (esc_id, e['customer'], e['issue'][:500], e['date'], "Open", sentiment, priority, escalation_flag, "", ""))
-
         new_entries += 1
-
     conn.commit()
     return new_entries
 
@@ -176,10 +158,7 @@ def load_escalations_df():
 def upload_excel_and_analyze(file):
     try:
         df = pd.read_excel(file)
-        # Expecting columns like customer/email, issue/text, date(optional)
         df.columns = [c.lower().strip() for c in df.columns]
-
-        # Normalize column names
         customer_col = next((c for c in df.columns if "customer" in c or "email" in c), None)
         issue_col = next((c for c in df.columns if "issue" in c or "text" in c or "complaint" in c), None)
         date_col = next((c for c in df.columns if "date" in c), None)
@@ -189,14 +168,14 @@ def upload_excel_and_analyze(file):
             return 0
 
         count = 0
-        existing_count = pd.read_sql_query("SELECT COUNT(*) FROM escalations", conn).iloc[0,0]
+        cursor.execute("SELECT COUNT(*) FROM escalations")
+        existing_count = cursor.fetchone()[0]
 
         for idx, row in df.iterrows():
             customer = str(row[customer_col])
             issue = str(row[issue_col])
             date = str(row[date_col]) if date_col else datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
 
-            # Duplicate check
             cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (customer, issue[:500]))
             if cursor.fetchone():
                 continue
@@ -209,7 +188,6 @@ def upload_excel_and_analyze(file):
                 INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (esc_id, customer, issue[:500], date, "Open", sentiment, priority, escalation_flag, "", ""))
-
             count += 1
         conn.commit()
         return count
@@ -230,7 +208,6 @@ def manual_entry():
         count = cursor.fetchone()[0]
         esc_id = f"SESICE-{count+250001}"
         sentiment, priority, escalation_flag = analyze_issue(issue)
-
         cursor.execute("""
             INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -302,7 +279,6 @@ def render_kanban():
     if filter_choice == "Escalated Only":
         df = df[df['escalation_flag'] == 1]
 
-    # Counts
     open_count = len(df[df['status'] == 'Open'])
     inprogress_count = len(df[df['status'] == 'In Progress'])
     resolved_count = len(df[df['status'] == 'Resolved'])
@@ -326,7 +302,6 @@ def render_kanban():
 
 def save_complaints_csv():
     df = load_escalations_df()
-    # Save full complaints data to csv/excel for download
     filename = "complaints_data.xlsx"
     df.to_excel(filename, index=False)
     return filename
@@ -352,7 +327,7 @@ def main():
     if st.sidebar.button("Download Email Complaints Excel"):
         filepath = save_complaints_csv()
         with open(filepath, "rb") as f:
-            btn = st.sidebar.download_button(
+            st.sidebar.download_button(
                 label="Download Complaints Data",
                 data=f,
                 file_name="EscalateAI_Complaints.xlsx",
