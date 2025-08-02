@@ -175,7 +175,6 @@ if 'email_scheduler' not in st.session_state:
     st.session_state['scheduler_status'] = True
     st.session_state['email_scheduler'] = True
 
-
 # Streamlit UI
 st.title("🚀 EscalateAI - Escalation Management")
 
@@ -200,13 +199,11 @@ with st.sidebar:
             insert_escalation({
                 "customer": manual_customer,
                 "issue": manual_issue,
-                "sentiment": ts,
-                "urgency": urgency,
                 "date_reported": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "escalated": escalated,
-                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "rule_sentiment": rs,
-                "transformer_sentiment": ts
+                "transformer_sentiment": ts,
+                "urgency": urgency,
+                "escalated": int(escalated),
             })
             st.success("Escalation added!")
         else:
@@ -214,9 +211,8 @@ with st.sidebar:
 
     st.markdown("---")
 
-        if st.button("📬 Parse Emails Manually"):
+    if st.button("📬 Parse Emails Manually"):
         parse_emails()
-
 
     st.header("Upload Excel")
     uploaded_file = st.file_uploader("Upload Excel with columns: customer, issue, date_reported (optional)", type=["xlsx"])
@@ -231,13 +227,11 @@ with st.sidebar:
                 insert_escalation({
                     "customer": cust,
                     "issue": issue,
-                    "sentiment": ts,
-                    "urgency": urgency,
                     "date_reported": date_reported,
-                    "escalated": escalated,
-                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "rule_sentiment": rs,
-                    "transformer_sentiment": ts
+                    "transformer_sentiment": ts,
+                    "urgency": urgency,
+                    "escalated": int(escalated),
                 })
             st.success("Escalations imported successfully!")
         except Exception as e:
@@ -252,7 +246,8 @@ st.header("Escalations Dashboard")
 
 filter_choice = st.radio("Escalation Status:", ["All", "Escalated Only", "Non-Escalated"])
 urgency_filter = st.selectbox("Urgency:", ["All"] + sorted(df["urgency"].unique()) if not df.empty else [])
-sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["sentiment"].unique()) if not df.empty else [])
+# Using rule_sentiment here but you can change to transformer_sentiment or combine as needed
+sentiment_filter = st.selectbox("Sentiment:", ["All"] + sorted(df["rule_sentiment"].unique()) if not df.empty else [])
 date_range = st.date_input("Date Range:", [])
 
 if filter_choice == "Escalated Only":
@@ -264,7 +259,7 @@ if urgency_filter != "All":
     df = df[df["urgency"] == urgency_filter]
 
 if sentiment_filter != "All":
-    df = df[df["sentiment"] == sentiment_filter]
+    df = df[df["rule_sentiment"] == sentiment_filter]
 
 if date_range and len(date_range) == 2:
     start_date = date_range[0].strftime("%Y-%m-%d")
@@ -275,7 +270,7 @@ if df.empty:
     st.info("No escalations found.")
 else:
     for _, row in df.iterrows():
-        with st.expander(f"{row['id']} - {row['customer']} ({row['sentiment']}/{row['urgency']})"):
+        with st.expander(f"{row['escalation_id']} - {row['customer']} ({row['rule_sentiment']}/{row['urgency']})"):
             st.markdown(f"**Issue:** {row['issue']}")
             st.markdown(f"**Escalated:** {'Yes' if row['escalated'] else 'No'}")
             st.markdown(f"**Date:** {row['date_reported']}")
