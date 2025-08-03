@@ -322,55 +322,92 @@ def check_sla_and_alert():
             alerts_sent += 1
     return alerts_sent
 
+import streamlit as st
+import imaplib
+import email
+from email.header import decode_header
+import datetime
+import pandas as pd
+import sqlite3
+import os
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from dotenv import load_dotenv
+import requests
+
+load_dotenv()
+
+EMAIL = os.getenv("EMAIL_USER")
+APP_PASSWORD = os.getenv("EMAIL_PASS")
+IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
+MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")
+
+NEGATIVE_KEYWORDS = [
+    # ... same keywords ...
+    "fail", "break", "crash", "defect", "fault", "degrade", "damage",
+    "trip", "malfunction", "blank", "shutdown", "discharge",
+    "dissatisfy", "frustrate", "complain", "reject", "delay", "ignore",
+    "escalate", "displease", "noncompliance", "neglect",
+    "wait", "pending", "slow", "incomplete", "miss", "omit",
+    "unresolved", "shortage", "no response",
+    "fire", "burn", "flashover", "arc", "explode", "unsafe",
+    "leak", "corrode", "alarm", "incident",
+    "impact", "loss", "risk", "downtime", "interrupt", "cancel",
+    "terminate", "penalty"
+]
+
+conn = sqlite3.connect("escalations.db", check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS escalations (
+    escalation_id TEXT PRIMARY KEY,
+    customer TEXT,
+    issue TEXT,
+    date TEXT,
+    status TEXT,
+    sentiment TEXT,
+    priority TEXT,
+    escalation_flag INTEGER,
+    action_taken TEXT,
+    action_owner TEXT,
+    status_update_date TEXT
+)
+""")
+conn.commit()
+
+analyzer = SentimentIntensityAnalyzer()
+
+# (All your previous functions here: fetch_gmail_emails, analyze_issue, save_emails_to_db, send_ms_teams_alert, load_escalations_df, upload_excel_and_analyze, manual_entry_process, display_kanban_card, save_complaints_excel, check_sla_and_alert)
+
+# Now just the updated render_kanban with simpler sticky header:
+
 def render_kanban():
     st.markdown(
         """
         <style>
-        /* Fixed header container */
-        .fixed-header {
-            position: fixed;
+        .sticky-header {
+            position: sticky;
             top: 0;
-            left: 0;
-            right: 0;
             background-color: white;
-            padding: 15px 20px;
-            z-index: 9999;
+            padding: 15px 10px 10px 10px;
             border-bottom: 1px solid #ddd;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
         }
-        .fixed-header h1 {
+        .sticky-header h1 {
             margin: 0;
             font-weight: 700;
-            font-size: 1.8rem;
-            user-select: none;
         }
-        .button-group > div {
+        .buttons-row > div {
             display: inline-block;
-            margin-left: 15px;
-        }
-        /* Add top padding to body content to avoid overlap */
-        .main-content {
-            padding-top: 110px;  /* Increase this to make space for fixed header */
+            margin-right: 10px;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    # Header HTML
-    st.markdown(
-        """
-        <div class="fixed-header">
-            <h1>🚀 EscalateAI - Escalations & Complaints Kanban Board</h1>
-            <div class="button-group">
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="sticky-header">', unsafe_allow_html=True)
+    st.markdown("<h1>🚀 EscalateAI - Escalations & Complaints Kanban Board</h1>", unsafe_allow_html=True)
 
-    # Buttons side by side
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("📧 Fetch Emails Manually"):
@@ -388,13 +425,11 @@ def render_kanban():
             else:
                 st.info("No SLA breaches detected at this time.")
 
-    # Close header divs
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # Wrap main kanban content with padding so it's not hidden behind header
-    st.markdown('<div class="main-content">', unsafe_allow_html=True)
+    # Add top padding so content won't be hidden behind sticky header
+    st.markdown('<div style="padding-top:80px;">', unsafe_allow_html=True)
 
-    # Load escalation data and show filter and kanban columns
     df = load_escalations_df()
     filter_choice = st.radio("Filter Escalations:", ["All", "Escalated Only"])
 
@@ -423,12 +458,6 @@ def render_kanban():
             display_kanban_card(row)
 
     st.markdown('</div>', unsafe_allow_html=True)
-
-def save_complaints_excel():
-    df = load_escalations_df()
-    filename = "complaints_data.xlsx"
-    df.to_excel(filename, index=False)
-    return filename
 
 def main():
     st.sidebar.header("📥 Upload Complaints Excel File")
