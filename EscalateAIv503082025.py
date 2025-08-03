@@ -283,7 +283,7 @@ def display_kanban_card(row):
             key=f"{esc_id}_owner"
         )
 
-        if st.button("Save Updates", key=f"save_{esc_id}", help="Save changes to this escalation"):
+        if st.button("Save Updates", key=f"save_{esc_id}"):
             now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
             cursor.execute("""
                 UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?
@@ -293,47 +293,16 @@ def display_kanban_card(row):
             st.success("Updated successfully!")
             st.experimental_rerun()
 
-        # Manual MS Teams notify button per card
-        if st.button("Notify MS Teams", key=f"notify_{esc_id}", help="Send manual notification to MS Teams"):
-            alert_msg = f"🔔 Manual notification for Escalation ID {esc_id}\nCustomer: {row['customer']}\nIssue: {row['issue'][:300]}\nStatus: {new_status}"
+        if st.button("Notify MS Teams", key=f"notify_{esc_id}"):
+            alert_msg = f"🔔 Escalation Notification:\nID: {esc_id}\nCustomer: {row['customer']}\nIssue: {row['issue'][:200]}...\nStatus: {new_status}\nPriority: {priority}"
             send_ms_teams_alert(alert_msg)
-            st.success("Notification sent to MS Teams!")
+            st.success("Notification sent to MS Teams")
 
 def render_kanban():
-    st.markdown("""
-    <style>
-    /* Sticky header for title */
-    .fixed-header {
-        position: sticky;
-        top: 0;
-        background-color: white;
-        z-index: 9999;
-        padding: 10px 0;
-        border-bottom: 2px solid #ddd;
-        text-align: center;
-    }
-    /* Beautify buttons */
-    .stButton>button {
-        background-color: #0078d7;
-        color: white;
-        border-radius: 5px;
-        padding: 6px 14px;
-        border: none;
-        font-weight: 600;
-        transition: background-color 0.3s ease;
-    }
-    .stButton>button:hover {
-        background-color: #005a9e;
-        color: white;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="fixed-header"><h1>🚀 EscalateAI - Escalations & Complaints Kanban Board</h1></div>', unsafe_allow_html=True)
-    st.write("")  # Add some spacing after sticky header
+    st.title("🚀 EscalateAI - Escalations & Complaints Kanban Board")
 
     df = load_escalations_df()
-    filter_choice = st.radio("Filter Escalations:", ["All", "Escalated Only"], horizontal=True)
+    filter_choice = st.radio("Filter Escalations:", ["All", "Escalated Only"])
 
     if filter_choice == "Escalated Only":
         df = df[df['escalation_flag'] == 1]
@@ -366,7 +335,7 @@ def save_complaints_excel():
     return filename
 
 def check_sla_and_alert():
-    # SLA breach if high priority & Open status for >48 hours
+    # SLA breach if high priority & Open status for >10 minutes (for testing)
     df = load_escalations_df()
     now = datetime.datetime.now(datetime.timezone.utc)  # timezone aware now
     breached = df[
@@ -381,9 +350,9 @@ def check_sla_and_alert():
         except Exception:
             continue
         elapsed = now - last_update
-        if elapsed.total_seconds() > 48 * 3600:
+        if elapsed.total_seconds() > 10 * 60:  # 10 minutes SLA for testing
             send_ms_teams_alert(
-                f"⚠️ SLA breach detected:\nID: {row['escalation_id']}\nCustomer: {row['customer']}\nOpen for: {elapsed.days} days\nIssue: {row['issue'][:200]}..."
+                f"⚠️ SLA breach detected:\nID: {row['escalation_id']}\nCustomer: {row['customer']}\nOpen for: {elapsed.seconds // 60} minutes\nIssue: {row['issue'][:200]}..."
             )
             alerts_sent += 1
     return alerts_sent
@@ -412,8 +381,7 @@ def main():
         else:
             st.sidebar.info("No new emails or error.")
 
-    st.sidebar.markdown("---")
-    if st.sidebar.button("Download Complaints Data as Excel"):
+    if st.sidebar.button("Download Email Complaints Excel"):
         filepath = save_complaints_excel()
         with open(filepath, "rb") as f:
             st.sidebar.download_button(
@@ -423,13 +391,7 @@ def main():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-    st.sidebar.markdown("---")
-    if st.sidebar.button("Notify SLA Breach Alerts (Manual)"):
-        count = check_sla_and_alert()
-        if count:
-            st.sidebar.success(f"Sent {count} SLA breach alerts to MS Teams.")
-        else:
-            st.sidebar.info("No SLA breaches detected.")
+    check_sla_and_alert()
 
     render_kanban()
 
