@@ -11,10 +11,8 @@ from dotenv import load_dotenv
 import requests
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-import numpy as np
-import threading
 
-# Load environment variables from .env file
+# Load environment variables from .env file (email credentials, webhook URLs)
 load_dotenv()
 
 EMAIL = os.getenv("EMAIL_USER")
@@ -22,6 +20,7 @@ APP_PASSWORD = os.getenv("EMAIL_PASS")
 IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
 MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")
 
+# List of negative keywords to flag priority escalations
 NEGATIVE_KEYWORDS = [
     # Technical Failures & Product Malfunction
     "fail", "break", "crash", "defect", "fault", "degrade", "damage",
@@ -40,7 +39,7 @@ NEGATIVE_KEYWORDS = [
     "terminate", "penalty"
 ]
 
-# Setup SQLite database connection and create table
+# Setup SQLite database connection and create escalations table if not exists
 conn = sqlite3.connect("escalations.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -61,35 +60,31 @@ CREATE TABLE IF NOT EXISTS escalations (
 """)
 conn.commit()
 
-# Sentiment analyzer instance
 analyzer = SentimentIntensityAnalyzer()
 
-# Globals for ML model and vectorizer (dummy initialization)
+# Global ML model and vectorizer variables
 model = None
 vectorizer = None
 
 def load_ml_model():
-    """Initialize dummy predictive model for escalation risk."""
+    """
+    Initialize and train a dummy logistic regression model with minimal data
+    to avoid errors in prediction when the real model is not yet trained.
+    """
     global model, vectorizer
     vectorizer = TfidfVectorizer()
     model = LogisticRegression()
 
-    # Dummy training on trivial data to avoid errors on predict
-    X_train = vectorizer.fit_transform(["dummy"])
-    y_train = [0]
+    # Dummy training data with 2 classes to avoid ValueError
+    X_train = vectorizer.fit_transform(["dummy negative example", "dummy positive example"])
+    y_train = [0, 1]  # Two classes: 0 and 1
     model.fit(X_train, y_train)
 
-def predict_escalation_risk(issue_text):
-    """Predict escalation risk using the ML model."""
-    global model, vectorizer
-    if not model or not vectorizer:
-        return "Low"
-    X = vectorizer.transform([issue_text])
-    prob = model.predict_proba(X)[0][1]  # Probability of positive class
-    return "High" if prob > 0.5 else "Low"
-
 def fetch_gmail_emails():
-    """Fetch latest unseen emails from Gmail inbox."""
+    """
+    Connects to Gmail via IMAP and fetches the last 10 unseen emails from the inbox,
+    returning a list of dictionaries containing customer, issue text, subject, and date.
+    """
     if not EMAIL or not APP_PASSWORD:
         st.error("Gmail credentials not set in environment variables.")
         return []
@@ -155,7 +150,10 @@ def fetch_gmail_emails():
         return []
 
 def analyze_issue(issue_text):
-    """Analyze issue text for sentiment, priority, and escalation flag."""
+    """
+    Perform sentiment analysis and keyword detection on issue text
+    to determine sentiment, priority, and escalation flag.
+    """
     text_lower = issue_text.lower()
     vs = analyzer.polarity_scores(issue_text)
     sentiment = "Positive" if vs["compound"] >= 0 else "Negative"
@@ -165,7 +163,10 @@ def analyze_issue(issue_text):
     return sentiment, priority, escalation_flag
 
 def save_emails_to_db(emails):
-    """Save fetched emails to DB if new and analyze them."""
+    """
+    Saves fetched emails to the SQLite database, assigning escalation IDs,
+    analyzing sentiment/priority, and sending MS Teams alerts if necessary.
+    """
     cursor.execute("SELECT COUNT(*) FROM escalations")
     count = cursor.fetchone()[0]
     new_entries = 0
@@ -188,7 +189,9 @@ def save_emails_to_db(emails):
     return new_entries
 
 def send_ms_teams_alert(message):
-    """Send alert message to MS Teams via webhook."""
+    """
+    Sends an alert message to the configured Microsoft Teams webhook URL.
+    """
     if not MS_TEAMS_WEBHOOK_URL:
         st.warning("MS Teams webhook URL not set; cannot send alerts.")
         return
@@ -204,12 +207,17 @@ def send_ms_teams_alert(message):
         st.error(f"Error sending MS Teams alert: {e}")
 
 def load_escalations_df():
-    """Load all escalation records from DB into a DataFrame."""
+    """
+    Load all escalation records from the database into a Pandas DataFrame.
+    """
     df = pd.read_sql_query("SELECT * FROM escalations", conn)
     return df
 
 def upload_excel_and_analyze(file):
-    """Parse uploaded Excel file and save new complaints."""
+    """
+    Uploads an Excel file with escalation complaints,
+    analyzes the issues, and inserts them into the database.
+    """
     try:
         df = pd.read_excel(file)
         df.columns = [c.lower().strip() for c in df.columns]
@@ -250,7 +258,9 @@ def upload_excel_and_analyze(file):
         return 0
 
 def manual_entry_process(customer, issue):
-    """Manually add a single escalation entry and analyze."""
+    """
+    Manually add a single escalation entry from sidebar input.
+    """
     if not customer or not issue:
         st.sidebar.error("Please fill customer and issue.")
         return False
@@ -270,7 +280,10 @@ def manual_entry_process(customer, issue):
     return True
 
 def display_kanban_card(row):
-    """Display a single escalation card in the Kanban board with update options."""
+    """
+    Displays a single escalation card with styling and controls to update status,
+    action taken, and action owner. Allows saving updates back to DB.
+    """
     esc_id = row['escalation_id']
     sentiment = row['sentiment']
     priority = row['priority']
@@ -284,6 +297,7 @@ def display_kanban_card(row):
     status_color = status_colors.get(status, "#bdc3c7")
     sentiment_color = sentiment_colors.get(sentiment, "#7f8c8d")
 
+    # Header with ID, sentiment, priority, status colored badges
     header_html = f"""
     <div style="
         border-left: 6px solid {border_color};
@@ -296,15 +310,15 @@ def display_kanban_card(row):
         <span style='color:{status_color}; font-weight:bold;'>{status}</span>
     </div>
     """
-
     st.markdown(header_html, unsafe_allow_html=True)
 
     with st.expander("Details", expanded=False):
         st.markdown(f"**Customer:** {row['customer']}")
         st.markdown(f"**Issue:** {row['issue']}")
         st.markdown(f"**Date:** {row['date']}")
+        st.markdown(f"**User Feedback:** {row.get('user_feedback', '')}")
 
-        # Update status select box, action taken, action owner, feedback text inputs
+        # Controls for updating status, action taken, and owner
         new_status = st.selectbox(
             "Update Status",
             ["Open", "In Progress", "Resolved"],
@@ -321,9 +335,9 @@ def display_kanban_card(row):
             value=row['action_owner'] or "",
             key=f"{esc_id}_owner"
         )
-        user_feedback = st.text_area(
-            "User Feedback (optional)",
-            value=row.get('user_feedback', "") or "",
+        new_feedback = st.text_area(
+            "User Feedback",
+            value=row.get('user_feedback', ""),
             key=f"{esc_id}_feedback"
         )
 
@@ -332,20 +346,25 @@ def display_kanban_card(row):
             cursor.execute("""
                 UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?, user_feedback=?
                 WHERE escalation_id=?
-            """, (new_status, new_action_taken, new_action_owner, now, user_feedback, esc_id))
+            """, (new_status, new_action_taken, new_action_owner, now, new_feedback, esc_id))
             conn.commit()
             st.success("Updated successfully!")
             st.experimental_rerun()
 
 def save_complaints_excel():
-    """Export current escalations DB to Excel file."""
+    """
+    Export escalations to Excel file for download.
+    """
     df = load_escalations_df()
     filename = "complaints_data.xlsx"
     df.to_excel(filename, index=False)
     return filename
 
 def check_sla_and_alert():
-    """Check for SLA breaches: high priority, open status > 10 mins."""
+    """
+    Check for SLA breaches: high priority & Open status for >10 minutes (testing)
+    Sends alerts via MS Teams webhook.
+    """
     df = load_escalations_df()
     now = datetime.datetime.now(datetime.timezone.utc)  # timezone aware now
     breached = df[
@@ -368,77 +387,24 @@ def check_sla_and_alert():
     return alerts_sent
 
 def render_kanban():
-    """Render Kanban board with escalation buckets in 1 row, 3 columns."""
-    # Title and action buttons
-    st.markdown("<h1 style='text-align:center;'>🚀 EscalateAI - Escalations & Complaints Kanban Board</h1>", unsafe_allow_html=True)
-    col_button1, col_button2 = st.columns([1,1])
-    with col_button1:
-        if st.button("📧 Fetch Emails Manually"):
-            emails = fetch_gmail_emails()
-            if emails:
-                new_count = save_emails_to_db(emails)
-                st.success(f"Fetched and saved {new_count} new emails.")
-            else:
-                st.info("No new emails or error.")
-    with col_button2:
-        if st.button("⏰ Trigger SLA Alert Check"):
-            alerts_sent = check_sla_and_alert()
-            if alerts_sent > 0:
-                st.success(f"Sent {alerts_sent} SLA breach alert(s) to MS Teams and Email.")
-            else:
-                st.info("No SLA breaches detected at this time.")
-
-    # Load data and filter option
-    df = load_escalations_df()
-    filter_choice = st.radio("Filter Escalations:", ["All", "Escalated Only"], horizontal=True)
-
-    if filter_choice == "Escalated Only":
-        df = df[df['escalation_flag'] == 1]
-
-    # Status buckets counts
-    open_count = len(df[df['status'] == 'Open'])
-    inprogress_count = len(df[df['status'] == 'In Progress'])
-    resolved_count = len(df[df['status'] == 'Resolved'])
-
-    # Buckets in 1 row, 3 columns
-    cols = st.columns(3)
-    with cols[0]:
-        st.markdown(f"<h3 style='color:#f1c40f;'>🟡 Open ({open_count})</h3>", unsafe_allow_html=True)
-        for _, row in df[df['status'] == 'Open'].iterrows():
-            display_kanban_card(row)
-    with cols[1]:
-        st.markdown(f"<h3 style='color:#2980b9;'>🔵 In Progress ({inprogress_count})</h3>", unsafe_allow_html=True)
-        for _, row in df[df['status'] == 'In Progress'].iterrows():
-            display_kanban_card(row)
-    with cols[2]:
-        st.markdown(f"<h3 style='color:#2ecc71;'>🟢 Resolved ({resolved_count})</h3>", unsafe_allow_html=True)
-        for _, row in df[df['status'] == 'Resolved'].iterrows():
-            display_kanban_card(row)
-
-def main():
-    st.set_page_config(page_title="EscalateAI - AI Escalation Manager", layout="wide")
-
-    # Sidebar for manual entry and bulk upload
-    st.sidebar.header("Add New Escalations")
-    with st.sidebar.expander("Manual Entry"):
-        customer = st.text_input("Customer (Email or Name)")
-        issue = st.text_area("Issue Description")
-        if st.button("Add Escalation"):
-            manual_entry_process(customer, issue)
-
-    with st.sidebar.expander("Bulk Upload via Excel"):
-        uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
-        if uploaded_file is not None:
-            count = upload_excel_and_analyze(uploaded_file)
-            st.sidebar.success(f"Added {count} new escalation(s) from Excel.")
-
-    # Export escalations button
-    if st.sidebar.button("Export Escalations to Excel"):
-        filename = save_complaints_excel()
-        st.sidebar.success(f"Saved escalations to {filename}")
-
-    load_ml_model()
-    render_kanban()
-
-if __name__ == "__main__":
-    main()
+    """
+    Renders the main Kanban board with 3 columns for status buckets: Open, In Progress, Resolved.
+    Includes buttons for fetching emails and triggering SLA alert checks.
+    """
+    # Sticky header style for title + buttons
+    st.markdown(
+        """
+        <style>
+        .sticky-header {
+            position: sticky;
+            top: 0;
+            background-color: white;
+            padding: 10px 20px 10px 0;
+            z-index: 100;
+            border-bottom: 1px solid #ddd;
+        }
+        .button-container > div {
+            display: inline-block;
+            margin-right: 15px;
+        }
+        </
