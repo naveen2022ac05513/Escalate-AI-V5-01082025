@@ -1,19 +1,3 @@
-#✅ Gmail & Excel-based issue parsing
-#✅ NLP-based sentiment & urgency detection using VADER & custom negative words (no SpaCy/BERT)
-#✅ Tagging: severity, criticality, category
-#✅ Kanban board with inline editing & real-time status counts
-#✅ MS Teams & Email SLA alerts
-#✅ Escalation prediction (basic ML placeholder)
-#✅ Continuous learning feedback loop placeholder
-#✅ Sidebar upload/download options for complaints
-#✅ Escalated vs All filters
-#✅ Download consolidated issue log
-#✅ Show count of Open / In Progress / Resolved
-#✅ Escalation mark on UI
-#✅ Uses your custom expanded negative word list
-#✅ Fully functional requirements.txt
-#✅ Environment variable support via .env
-
 import streamlit as st
 import imaplib
 import email
@@ -36,9 +20,9 @@ EMAIL = os.getenv("EMAIL_USER")
 APP_PASSWORD = os.getenv("EMAIL_PASS")
 IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
 MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")
-EMAIL_ALERT_RECIPIENT = os.getenv("EMAIL_ALERT_RECIPIENT")  # For email SLA alerts if configured
+EMAIL_ALERT_RECIPIENT = os.getenv("EMAIL_ALERT_RECIPIENT")  # Optional
 
-# Negative words including full categories
+# Negative words list (full categories as requested)
 NEGATIVE_KEYWORDS = [
     # Technical Failures & Product Malfunction
     "fail", "break", "crash", "defect", "fault", "degrade", "damage",
@@ -57,7 +41,7 @@ NEGATIVE_KEYWORDS = [
     "terminate", "penalty"
 ]
 
-# Setup DB connection and table
+# Database setup
 conn = sqlite3.connect("escalations.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -83,16 +67,16 @@ conn.commit()
 
 analyzer = SentimentIntensityAnalyzer()
 
-# ML Model placeholders - Initialize vectorizer and model (empty)
+# ML placeholders
 tfidf_vectorizer = TfidfVectorizer(max_features=500)
 rf_classifier = RandomForestClassifier()
-model_trained = False  # Flag to check if model trained
+model_trained = False
 
-# === Functions ===
+# --------------- FUNCTIONS ----------------
 
 def fetch_gmail_emails():
     if not EMAIL or not APP_PASSWORD:
-        st.error("Gmail credentials not set in environment variables.")
+        st.error("Gmail credentials missing in environment variables.")
         return []
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
@@ -106,7 +90,7 @@ def fetch_gmail_emails():
         email_ids = data[0].split()
         emails = []
 
-        for eid in email_ids[-10:]:  # last 10 unseen emails
+        for eid in email_ids[-10:]:
             res, msg_data = mail.fetch(eid, "(RFC822)")
             if res != "OK":
                 continue
@@ -156,17 +140,13 @@ def analyze_issue(issue_text):
     vs = analyzer.polarity_scores(issue_text)
     sentiment = "Positive" if vs["compound"] >= 0 else "Negative"
 
-    # Count negative keywords
     neg_count = sum(1 for kw in NEGATIVE_KEYWORDS if kw in text_lower)
 
-    # Priority logic
     priority = "High" if sentiment == "Negative" and neg_count >= 2 else "Low"
     escalation_flag = 1 if priority == "High" else 0
 
-    # Tagging severity, criticality, category (basic example)
     severity = "Critical" if priority == "High" else "Medium"
     criticality = "Urgent" if priority == "High" else "Routine"
-    # Category heuristic - keywords can be expanded for better classification
     if any(x in text_lower for x in ["complain", "dissatisfy", "frustrate", "escalate", "delay", "reject"]):
         category = "Complaint"
     elif any(x in text_lower for x in ["feedback", "suggestion", "request"]):
@@ -181,7 +161,6 @@ def save_emails_to_db(emails):
     count = cursor.fetchone()[0]
     new_entries = 0
     for e in emails:
-        # Avoid duplicates by customer + issue snippet
         cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (e['customer'], e['issue'][:500]))
         if cursor.fetchone():
             continue
@@ -302,7 +281,7 @@ def check_sla_and_alert():
         except Exception:
             continue
         elapsed = now - last_update
-        if elapsed.total_seconds() > 10 * 60:  # 10 minutes threshold
+        if elapsed.total_seconds() > 10 * 60:  # 10 minutes SLA
             send_ms_teams_alert(
                 f"⚠️ SLA breach detected:\nID: {row['escalation_id']}\nCustomer: {row['customer']}\nOpen for: {elapsed.seconds // 60} minutes\nIssue: {row['issue'][:200]}..."
             )
@@ -324,7 +303,6 @@ def display_kanban_card(row):
     status_color = status_colors.get(status, "#bdc3c7")
     sentiment_color = sentiment_colors.get(sentiment, "#7f8c8d")
 
-    # Mark escalated items with 🔥 icon
     escalation_icon = " 🔥" if escalation_flag == 1 else ""
 
     header_html = f"""
@@ -348,7 +326,6 @@ def display_kanban_card(row):
         st.markdown(f"**Date:** {row['date']}")
         st.markdown(f"**Severity:** {row['severity']} | **Criticality:** {row['criticality']} | **Category:** {row['category']}")
 
-        # Unique keys per escalation for widgets
         new_status = st.selectbox(
             "Update Status",
             ["Open", "In Progress", "Resolved"],
@@ -375,7 +352,6 @@ def display_kanban_card(row):
             conn.commit()
             st.success("Updated successfully! Please refresh the page to see changes.")
 
-# ML model training function (simple example)
 def train_model():
     global model_trained, rf_classifier, tfidf_vectorizer
     df = load_escalations_df()
@@ -383,7 +359,6 @@ def train_model():
         st.warning("Not enough data to train the ML model.")
         return
 
-    # Use issue text as features, escalation_flag as label
     X = df['issue']
     y = df['escalation_flag']
 
@@ -394,11 +369,91 @@ def train_model():
 
 def predict_escalation(issue):
     if not model_trained:
-        return 0  # Predict no escalation if model not trained
+        return 0
 
     X_tfidf = tfidf_vectorizer.transform([issue])
     pred = rf_classifier.predict(X_tfidf)[0]
     return pred
 
-def sidebar_content():
-    st.sidebar.title("EscalateAI Controls &
+def get_table_download_link(df, filename="data.xlsx"):
+    towrite = pd.ExcelWriter(filename, engine='xlsxwriter')
+    df.to_excel(towrite, index=False)
+    towrite.save()
+    with open(filename, "rb") as f:
+        data = f.read()
+    b64 = base64.b64encode(data).decode()
+    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{filename}">Download {filename}</a>'
+    return href
+
+def main():
+    st.title("EscalateAI - Customer Escalation Management")
+
+    st.sidebar.header("Controls")
+
+    if st.sidebar.button("Fetch & Analyze New Emails"):
+        new_emails = fetch_gmail_emails()
+        if new_emails:
+            count = save_emails_to_db(new_emails)
+            st.sidebar.success(f"Processed and added {count} new escalations from email.")
+        else:
+            st.sidebar.info("No new emails found or unable to fetch.")
+
+    st.sidebar.markdown("---")
+
+    uploaded_file = st.sidebar.file_uploader("Upload Excel file with complaints", type=["xls", "xlsx"])
+    if uploaded_file:
+        count = upload_excel_and_analyze(uploaded_file)
+        st.sidebar.success(f"Processed and added {count} new escalations from Excel.")
+
+    st.sidebar.markdown("---")
+
+    st.sidebar.subheader("Manual Entry")
+    manual_customer = st.sidebar.text_input("Customer Email / Name")
+    manual_issue = st.sidebar.text_area("Issue / Complaint Text")
+    if st.sidebar.button("Add Manual Escalation"):
+        if manual_entry_process(manual_customer, manual_issue):
+            st.sidebar.success("Manual escalation added successfully.")
+
+    st.sidebar.markdown("---")
+
+    df = load_escalations_df()
+
+    st.sidebar.subheader("Filters")
+    status_filter = st.sidebar.multiselect("Filter by Status", options=["Open", "In Progress", "Resolved"], default=["Open", "In Progress", "Resolved"])
+    escalated_only = st.sidebar.checkbox("Show only escalated cases", value=False)
+
+    filtered_df = df[df['status'].isin(status_filter)]
+    if escalated_only:
+        filtered_df = filtered_df[filtered_df['escalation_flag'] == 1]
+
+    # Show counts
+    counts = df.groupby("status").size().to_dict()
+    st.sidebar.markdown(f"**Counts:** Open: {counts.get('Open',0)} | In Progress: {counts.get('In Progress',0)} | Resolved: {counts.get('Resolved',0)}")
+
+    st.sidebar.markdown("---")
+
+    if st.sidebar.button("Check SLA Breaches and Send Alerts"):
+        alerts = check_sla_and_alert()
+        st.sidebar.success(f"SLA breach alerts sent: {alerts}")
+
+    st.sidebar.markdown("---")
+
+    if st.sidebar.button("Train ML Model (Random Forest)"):
+        train_model()
+
+    st.sidebar.markdown("---")
+
+    if st.sidebar.button("Download Consolidated Escalations Excel"):
+        filename = save_complaints_excel()
+        st.sidebar.markdown(get_table_download_link(load_escalations_df(), filename), unsafe_allow_html=True)
+
+    # Kanban board by status buckets
+    st.header("Escalations Kanban Board")
+
+    for status in ["Open", "In Progress", "Resolved"]:
+        st.subheader(f"{status} ({len(filtered_df[filtered_df['status'] == status])})")
+        for _, row in filtered_df[filtered_df['status'] == status].iterrows():
+            display_kanban_card(row)
+
+if __name__ == "__main__":
+    main()
