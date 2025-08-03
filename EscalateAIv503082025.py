@@ -333,17 +333,17 @@ def render_kanban():
             left: 0;
             right: 0;
             background-color: white;
-            padding: 10px 20px;
+            padding: 15px 20px;
             z-index: 9999;
             border-bottom: 1px solid #ddd;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
         }
         .fixed-header h1 {
             margin: 0;
-            font-weight: bold;
+            font-weight: 700;
             font-size: 1.8rem;
             user-select: none;
         }
@@ -353,13 +353,14 @@ def render_kanban():
         }
         /* Add top padding to body content to avoid overlap */
         .main-content {
-            padding-top: 80px; /* height of fixed header + some padding */
+            padding-top: 110px;  /* Increase this to make space for fixed header */
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
+    # Header HTML
     st.markdown(
         """
         <div class="fixed-header">
@@ -369,8 +370,8 @@ def render_kanban():
         unsafe_allow_html=True,
     )
 
+    # Buttons side by side
     col1, col2 = st.columns([1, 1])
-
     with col1:
         if st.button("📧 Fetch Emails Manually"):
             emails = fetch_gmail_emails()
@@ -379,7 +380,6 @@ def render_kanban():
                 st.success(f"Fetched and saved {new_count} new emails.")
             else:
                 st.info("No new emails or error.")
-
     with col2:
         if st.button("⏰ Trigger SLA Alert Check"):
             alerts_sent = check_sla_and_alert()
@@ -388,11 +388,13 @@ def render_kanban():
             else:
                 st.info("No SLA breaches detected at this time.")
 
-    st.markdown("</div></div>", unsafe_allow_html=True)  # close button-group and fixed-header divs
+    # Close header divs
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
-    # Now wrap the kanban content inside a div with padding-top so it is not hidden behind fixed header
+    # Wrap main kanban content with padding so it's not hidden behind header
     st.markdown('<div class="main-content">', unsafe_allow_html=True)
 
+    # Load escalation data and show filter and kanban columns
     df = load_escalations_df()
     filter_choice = st.radio("Filter Escalations:", ["All", "Escalated Only"])
 
@@ -422,33 +424,30 @@ def render_kanban():
 
     st.markdown('</div>', unsafe_allow_html=True)
 
+def save_complaints_excel():
+    df = load_escalations_df()
+    filename = "complaints_data.xlsx"
+    df.to_excel(filename, index=False)
+    return filename
+
 def main():
     st.sidebar.header("📥 Upload Complaints Excel File")
     uploaded_file = st.sidebar.file_uploader("Upload Excel file", type=["xlsx", "xls"])
     if uploaded_file:
         if st.sidebar.button("Analyze Uploaded Excel"):
             count = upload_excel_and_analyze(uploaded_file)
-            st.sidebar.success(f"Uploaded and analyzed {count} new complaints.")
+            st.sidebar.success(f"Processed and added {count} new escalations from Excel.")
 
-    st.sidebar.markdown("---")
-    st.sidebar.header("➕ Manual Escalation Entry")
+    st.sidebar.header("✍️ Manual Escalation Entry")
     customer = st.sidebar.text_input("Customer Email/Name")
-    issue = st.sidebar.text_area("Issue Description")
-    if st.sidebar.button("Add Escalation Manually"):
-        if manual_entry_process(customer, issue):
-            st.experimental_rerun()
+    issue = st.sidebar.text_area("Issue / Complaint Text")
+    if st.sidebar.button("Add Escalation"):
+        manual_entry_process(customer, issue)
 
     st.sidebar.markdown("---")
-    st.sidebar.header("💾 Export")
-    if st.sidebar.button("Download Escalations as Excel"):
+    if st.sidebar.button("Download All Escalations as Excel"):
         filename = save_complaints_excel()
-        with open(filename, "rb") as f:
-            st.sidebar.download_button(
-                label="Download Excel",
-                data=f,
-                file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        st.sidebar.markdown(f"[Download {filename}](./{filename})")
 
     render_kanban()
 
