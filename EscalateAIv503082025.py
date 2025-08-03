@@ -293,11 +293,6 @@ def display_kanban_card(row):
             st.success("Updated successfully!")
             st.experimental_rerun()
 
-        if st.button("Notify MS Teams", key=f"notify_{esc_id}"):
-            alert_msg = f"🔔 Escalation Notification:\nID: {esc_id}\nCustomer: {row['customer']}\nIssue: {row['issue'][:200]}...\nStatus: {new_status}\nPriority: {priority}"
-            send_ms_teams_alert(alert_msg)
-            st.success("Notification sent to MS Teams")
-
 def render_kanban():
     st.title("🚀 EscalateAI - Escalations & Complaints Kanban Board")
 
@@ -335,7 +330,7 @@ def save_complaints_excel():
     return filename
 
 def check_sla_and_alert():
-    # SLA breach if high priority & Open status for >10 minutes (for testing)
+    # SLA breach if high priority & Open status for >10 minutes (testing)
     df = load_escalations_df()
     now = datetime.datetime.now(datetime.timezone.utc)  # timezone aware now
     breached = df[
@@ -381,6 +376,14 @@ def main():
         else:
             st.sidebar.info("No new emails or error.")
 
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Trigger SLA Alert Check"):
+        alerts_sent = check_sla_and_alert()
+        if alerts_sent > 0:
+            st.sidebar.success(f"Sent {alerts_sent} SLA breach alert(s) to MS Teams.")
+        else:
+            st.sidebar.info("No SLA breaches detected at this time.")
+
     if st.sidebar.button("Download Email Complaints Excel"):
         filepath = save_complaints_excel()
         with open(filepath, "rb") as f:
@@ -391,7 +394,8 @@ def main():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-    check_sla_and_alert()
+    # Optional automatic SLA check on each page load; comment out if only manual preferred
+    # check_sla_and_alert()
 
     render_kanban()
 
