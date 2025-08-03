@@ -313,13 +313,37 @@ def check_sla_and_alert():
     return alerts_sent
 
 def sidebar_content():
-    st.sidebar.title("EscalateAI Filters & Info")
+    st.sidebar.title("EscalateAI Controls & Filters")
+
+    st.sidebar.markdown("### Manual Escalation Entry")
+    customer = st.sidebar.text_input("Customer Email or Name", key="manual_customer")
+    issue = st.sidebar.text_area("Issue / Complaint", key="manual_issue")
+    if st.sidebar.button("Add & Analyze Manual Entry"):
+        manual_entry_process(customer, issue)
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Upload Complaints Excel File")
+    uploaded_file = st.sidebar.file_uploader("Upload Excel file", type=["xlsx", "xls"], key="upload_excel")
+    if uploaded_file is not None:
+        try:
+            df = pd.read_excel(uploaded_file)
+            st.sidebar.write("Preview:")
+            st.sidebar.dataframe(df.head())
+        except Exception as e:
+            st.sidebar.error(f"Error reading Excel file: {e}")
+
+        if st.sidebar.button("Analyze Uploaded Excel", key="analyze_upload"):
+            count = upload_excel_and_analyze(uploaded_file)
+            st.sidebar.success(f"Uploaded and analyzed {count} new complaints.")
+
+    st.sidebar.markdown("---")
     status_filter = st.sidebar.multiselect(
         "Filter by Status",
         options=["Open", "In Progress", "Resolved"],
         default=["Open", "In Progress", "Resolved"],
         key="status_filter"
     )
+
     st.sidebar.markdown("---")
     total_escalations = len(load_escalations_df())
     st.sidebar.write(f"Total escalations: {total_escalations}")
@@ -339,7 +363,6 @@ def sidebar_content():
         else:
             st.sidebar.info("No SLA breaches detected.")
 
-    st.sidebar.markdown("---")
     return status_filter
 
 def display_kanban(df, status_filter):
@@ -364,42 +387,11 @@ def display_kanban(df, status_filter):
             for _, row in data.iterrows():
                 display_kanban_card(row)
 
-def manual_entry_section():
-    st.markdown("## Manual Escalation Entry")
-    customer = st.text_input("Customer Email or Name", key="manual_customer")
-    issue = st.text_area("Issue / Complaint", key="manual_issue")
-    if st.button("Add & Analyze Manual Entry"):
-        if not customer or not issue:
-            st.error("Please fill customer and issue.")
-        else:
-            manual_entry_process(customer, issue)
-
-def upload_section():
-    st.markdown("## Upload Complaints Excel File")
-    uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"], key="upload_excel")
-    if uploaded_file is not None:
-        st.write("Preview of uploaded file:")
-        try:
-            df = pd.read_excel(uploaded_file)
-            st.dataframe(df.head())
-        except Exception as e:
-            st.error(f"Error reading Excel file: {e}")
-
-        if st.button("Analyze Uploaded Excel", key="analyze_upload"):
-            count = upload_excel_and_analyze(uploaded_file)
-            st.success(f"Uploaded and analyzed {count} new complaints.")
-
 def main():
     st.title("🚀 EscalateAI - AI-Powered Escalation Management")
 
-    # Sidebar filter and actions (no dropdown menus)
+    # Sidebar with manual entry, upload and filters
     status_filter = sidebar_content()
-
-    # Manual entry form
-    manual_entry_section()
-
-    # Bulk upload form
-    upload_section()
 
     # Load escalations and render kanban board
     df = load_escalations_df()
