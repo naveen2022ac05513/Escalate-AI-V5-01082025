@@ -414,7 +414,7 @@ def main():
     if st.sidebar.button("Add & Analyze Manual Entry"):
         manual_entry_process(customer, issue)
 
-    # Remove fetch and SLA buttons from sidebar as now in Kanban sticky header
+    # Removed fetch and SLA buttons from sidebar; they're in sticky header now
 
     st.sidebar.markdown("---")
     if st.sidebar.button("Download Email Complaints Excel"):
@@ -425,4 +425,11 @@ def main():
                 data=f,
                 file_name="EscalateAI_Complaints.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+    render_kanban()
+
+if __name__ == "__main__":
+    main()
+
            
