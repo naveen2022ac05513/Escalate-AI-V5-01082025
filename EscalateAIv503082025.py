@@ -291,7 +291,8 @@ def display_kanban_card(row):
             """, (new_status, new_action_taken, new_action_owner, now, esc_id))
             conn.commit()
             st.success("Updated successfully!")
-            st.experimental_rerun()
+            return True  # Indicate that update happened and rerun is needed
+    return False
 
 def save_complaints_excel():
     df = load_escalations_df()
@@ -382,22 +383,30 @@ def render_kanban():
     inprogress_count = len(df[df['status'] == 'In Progress'])
     resolved_count = len(df[df['status'] == 'Resolved'])
 
+    rerun_needed = False  # Flag to detect if we should rerun
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
         st.markdown(f"<h3 style='color:#f1c40f;'>🟡 Open ({open_count})</h3>", unsafe_allow_html=True)
         for _, row in df[df['status'] == 'Open'].iterrows():
-            display_kanban_card(row)
+            if display_kanban_card(row):
+                rerun_needed = True
 
     with col2:
         st.markdown(f"<h3 style='color:#2980b9;'>🔵 In Progress ({inprogress_count})</h3>", unsafe_allow_html=True)
         for _, row in df[df['status'] == 'In Progress'].iterrows():
-            display_kanban_card(row)
+            if display_kanban_card(row):
+                rerun_needed = True
 
     with col3:
         st.markdown(f"<h3 style='color:#2ecc71;'>🟢 Resolved ({resolved_count})</h3>", unsafe_allow_html=True)
         for _, row in df[df['status'] == 'Resolved'].iterrows():
-            display_kanban_card(row)
+            if display_kanban_card(row):
+                rerun_needed = True
+
+    if rerun_needed:
+        st.experimental_rerun()
 
 def main():
     st.sidebar.header("📥 Upload Complaints Excel File")
@@ -414,8 +423,6 @@ def main():
     if st.sidebar.button("Add & Analyze Manual Entry"):
         manual_entry_process(customer, issue)
 
-    # Removed fetch and SLA buttons from sidebar; they're in sticky header now
-
     st.sidebar.markdown("---")
     if st.sidebar.button("Download Email Complaints Excel"):
         filepath = save_complaints_excel()
@@ -431,5 +438,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-           
