@@ -32,19 +32,6 @@ NEGATIVE_KEYWORDS = {
     "safety": ["fire", "burn", "flashover", "arc", "explode", "unsafe", "leak", "corrode", "alarm", "incident"],
     "business": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"]
 }
-def fetch_escalations():
-    conn = connect_db()
-    try:
-        df = pd.read_sql("SELECT * FROM escalations", conn)
-    except Exception as e:
-        st.error(f"Error reading escalations table: {e}")
-        df = pd.DataFrame()  # fallback empty
-    finally:
-        conn.close()
-    return df
-
-# Run this once on app start
-ensure_schema()
 # ---------------------------- DB INIT ----------------------------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -190,6 +177,19 @@ def send_alert(message, via="email"):
             requests.post(webhook_url, json={"text": message})
         except Exception as e:
             st.error(f"Teams alert failed: {e}")
+def fetch_escalations():
+    conn = connect_db()
+    try:
+        df = pd.read_sql("SELECT * FROM escalations", conn)
+    except Exception as e:
+        st.error(f"Error reading escalations table: {e}")
+        df = pd.DataFrame()  # fallback empty
+    finally:
+        conn.close()
+    return df
+
+# Run this once on app start
+ensure_schema()
 # ---------------------------- STREAMLIT UI ----------------------------
 st.set_page_config(layout="wide")
 st.title("🚨 EscalateAI – Customer Escalation Management")
