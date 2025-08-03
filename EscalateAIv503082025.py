@@ -291,8 +291,7 @@ def display_kanban_card(row):
             """, (new_status, new_action_taken, new_action_owner, now, esc_id))
             conn.commit()
             st.success("Updated successfully!")
-            return True  # Indicate that update happened and rerun is needed
-    return False
+            st.experimental_rerun()
 
 def save_complaints_excel():
     df = load_escalations_df()
@@ -324,35 +323,49 @@ def check_sla_and_alert():
     return alerts_sent
 
 def render_kanban():
-    # Sticky header style for title + buttons
     st.markdown(
         """
         <style>
+        /* Sticky container for title and buttons */
         .sticky-header {
             position: sticky;
             top: 0;
             background-color: white;
-            padding: 10px 20px 10px 0;
-            z-index: 100;
+            padding: 10px 20px;
+            z-index: 9999;
             border-bottom: 1px solid #ddd;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
-        .button-container > div {
+        .title {
+            margin: 0;
+            font-weight: bold;
+            font-size: 1.8rem;
+            flex-grow: 1;
+            user-select: none;
+        }
+        .button-group > div {
             display: inline-block;
-            margin-right: 15px;
+            margin-left: 15px;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    # Sticky container start
-    st.markdown('<div class="sticky-header">', unsafe_allow_html=True)
+    st.markdown(
+        '''
+        <div class="sticky-header">
+            <h1 class="title">🚀 EscalateAI - Escalations & Complaints Kanban Board</h1>
+            <div class="button-group">
+        ''',
+        unsafe_allow_html=True,
+    )
 
-    # Title
-    st.markdown("<h1>🚀 EscalateAI - Escalations & Complaints Kanban Board</h1>", unsafe_allow_html=True)
-
-    # Buttons side by side
     col1, col2 = st.columns([1,1])
+
     with col1:
         if st.button("📧 Fetch Emails Manually"):
             emails = fetch_gmail_emails()
@@ -361,6 +374,7 @@ def render_kanban():
                 st.success(f"Fetched and saved {new_count} new emails.")
             else:
                 st.info("No new emails or error.")
+
     with col2:
         if st.button("⏰ Trigger SLA Alert Check"):
             alerts_sent = check_sla_and_alert()
@@ -369,10 +383,8 @@ def render_kanban():
             else:
                 st.info("No SLA breaches detected at this time.")
 
-    # Sticky container end
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div></div>", unsafe_allow_html=True)  # Close button-group and sticky-header divs
 
-    # Load escalation data and filters
     df = load_escalations_df()
     filter_choice = st.radio("Filter Escalations:", ["All", "Escalated Only"])
 
@@ -383,30 +395,22 @@ def render_kanban():
     inprogress_count = len(df[df['status'] == 'In Progress'])
     resolved_count = len(df[df['status'] == 'Resolved'])
 
-    rerun_needed = False  # Flag to detect if we should rerun
-
     col1, col2, col3 = st.columns(3)
 
     with col1:
         st.markdown(f"<h3 style='color:#f1c40f;'>🟡 Open ({open_count})</h3>", unsafe_allow_html=True)
         for _, row in df[df['status'] == 'Open'].iterrows():
-            if display_kanban_card(row):
-                rerun_needed = True
+            display_kanban_card(row)
 
     with col2:
         st.markdown(f"<h3 style='color:#2980b9;'>🔵 In Progress ({inprogress_count})</h3>", unsafe_allow_html=True)
         for _, row in df[df['status'] == 'In Progress'].iterrows():
-            if display_kanban_card(row):
-                rerun_needed = True
+            display_kanban_card(row)
 
     with col3:
         st.markdown(f"<h3 style='color:#2ecc71;'>🟢 Resolved ({resolved_count})</h3>", unsafe_allow_html=True)
         for _, row in df[df['status'] == 'Resolved'].iterrows():
-            if display_kanban_card(row):
-                rerun_needed = True
-
-    if rerun_needed:
-        st.experimental_rerun()
+            display_kanban_card(row)
 
 def main():
     st.sidebar.header("📥 Upload Complaints Excel File")
@@ -430,7 +434,7 @@ def main():
             st.sidebar.download_button(
                 label="Download Complaints Data",
                 data=f,
-                file_name="EscalateAI_Complaints.xlsx",
+                file_name="complaints_data.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
