@@ -1,9 +1,8 @@
-streamlit
-imaplib2
-email-validator
-pandas
+streamlit>=1.30.0
+pandas>=2.0.0
 vaderSentiment
 requests
 python-dotenv
 streamlit-autorefresh
 openpyxl
+email-validator
