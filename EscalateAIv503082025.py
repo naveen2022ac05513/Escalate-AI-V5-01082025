@@ -1,233 +1,174 @@
-# EscalateAI – Full App with Email Parsing, Classification, Logging, Alerting, and MS Teams Integration
+# EscalateAI - Streamlit App
 
 import streamlit as st
-import imaplib
-import email
-from email.header import decode_header
-import datetime
 import pandas as pd
 import sqlite3
 import os
-import time
+import datetime
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import uuid
-import requests
 
-# Constants
+# DB Setup
 DB_FILE = "escalations.db"
-ESCALATION_PREFIX = "SESICE-"
-START_ESCALATION_ID = 250001
-GMAIL_IMAP = "imap.gmail.com"
-MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")
+os.makedirs("data", exist_ok=True)
+conn = sqlite3.connect(os.path.join("data", DB_FILE), check_same_thread=False)
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS escalations (
+    id TEXT PRIMARY KEY,
+    customer TEXT,
+    issue TEXT,
+    sentiment TEXT,
+    urgency TEXT,
+    criticality TEXT,
+    status TEXT,
+    action_taken TEXT,
+    owner TEXT,
+    timestamp TEXT,
+    last_update TEXT
+)''')
+conn.commit()
 
 # Sentiment Analyzer
 analyzer = SentimentIntensityAnalyzer()
 
-# Initialize DB
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS escalations (
-        escalation_id TEXT PRIMARY KEY,
-        timestamp TEXT,
-        sender TEXT,
-        subject TEXT,
-        issue TEXT,
-        sentiment TEXT,
-        urgency TEXT,
-        status TEXT,
-        action_taken TEXT,
-        status_update_date TEXT,
-        priority TEXT,
-        customer TEXT,
-        owner TEXT
-    )''')
-    conn.commit()
-    conn.close()
+# UI Styles
+st.markdown("""
+    <style>
+    .fixed-title {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        background-color: #1f77b4;
+        color: white;
+        font-size: 24px;
+        font-weight: bold;
+        padding: 10px 16px;
+        z-index: 999;
+        border-bottom: 2px solid #ccc;
+        text-align: center;
+    }
+    .reportview-container .main .block-container{
+        padding-top: 100px;
+    }
+    .custom-button {
+        background-color: #4CAF50;
+        border: none;
+        color: white;
+        padding: 10px 24px;
+        text-align: center;
+        font-size: 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+    }
+    .custom-button:hover {
+        background-color: #45a049;
+    }
+    </style>
+    <div class="fixed-title">EscalateAI - Escalations & Complaints Kanban Board</div>
+""", unsafe_allow_html=True)
 
-# Unique Escalation ID Generator
-def generate_escalation_id():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM escalations")
-    count = c.fetchone()[0]
-    conn.close()
-    return f"{ESCALATION_PREFIX}{START_ESCALATION_ID + count}"
+st.sidebar.title("EscalateAI Menu")
 
-# Load Escalations DataFrame
-def load_escalations_df():
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql("SELECT * FROM escalations", conn)
-    conn.close()
+# Utilities
+
+def generate_id():
+    result = c.execute("SELECT COUNT(*) FROM escalations").fetchone()[0]
+    return f"SESICE-{250001 + result}"
+
+def analyze_issue(issue):
+    score = analyzer.polarity_scores(issue)
+    sentiment = "Negative" if score['compound'] < -0.2 else "Neutral" if score['compound'] < 0.2 else "Positive"
+    urgency = "High" if any(word in issue.lower() for word in ["immediately", "urgent", "asap", "now"]) else "Low"
+    criticality = "High" if any(word in issue.lower() for word in ["critical", "escalate", "failure", "loss"]) else "Low"
+    return sentiment, urgency, criticality
+
+def fetch_cases():
+    df = pd.read_sql_query("SELECT * FROM escalations", conn)
     return df
 
-# Save Escalation to DB
-def save_escalation(data):
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.DataFrame([data])
-    df.to_sql("escalations", conn, if_exists="append", index=False)
-    conn.close()
+def save_case(data):
+    c.execute("""
+        INSERT INTO escalations (id, customer, issue, sentiment, urgency, criticality, status, action_taken, owner, timestamp, last_update)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, data)
+    conn.commit()
 
-# Analyze Email Content
-def analyze_sentiment(text):
-    score = analyzer.polarity_scores(text)["compound"]
-    if score <= -0.5:
-        return "Negative"
-    elif score >= 0.5:
-        return "Positive"
-    else:
-        return "Neutral"
+def update_case_status(escalation_id, status, action_taken):
+    now = datetime.datetime.now().isoformat()
+    c.execute("""
+        UPDATE escalations
+        SET status = ?, action_taken = ?, last_update = ?
+        WHERE id = ?
+    """, (status, action_taken, now, escalation_id))
+    conn.commit()
 
-def determine_urgency(text):
-    keywords = ["urgent", "immediately", "asap", "critical", "severe", "now"]
-    text = text.lower()
-    return "High" if any(k in text for k in keywords) else "Normal"
-
-def extract_customer_and_owner(sender):
-    domain = sender.split("@")[1]
-    customer = domain.split(".")[0].capitalize()
-    owner = "Unassigned"
-    return customer, owner
-
-# Send MS Teams Notification
-def send_ms_teams_alert(message):
-    if not MS_TEAMS_WEBHOOK_URL:
-        return
-    payload = {"text": message}
-    try:
-        requests.post(MS_TEAMS_WEBHOOK_URL, json=payload)
-    except Exception as e:
-        print("MS Teams alert error:", e)
-
-# Parse Emails from Gmail
-def parse_emails(email_user, email_pass):
-    mail = imaplib.IMAP4_SSL(GMAIL_IMAP)
-    mail.login(email_user, email_pass)
-    mail.select("inbox")
-
-    status, messages = mail.search(None, "UNSEEN")
-    messages = messages[0].split()
-    for num in messages:
-        _, msg_data = mail.fetch(num, "(RFC822)")
-        for response_part in msg_data:
-            if isinstance(response_part, tuple):
-                msg = email.message_from_bytes(response_part[1])
-                sender = msg.get("From")
-                subject = msg.get("Subject")
-                date = msg.get("Date")
-
-                if msg.is_multipart():
-                    for part in msg.walk():
-                        if part.get_content_type() == "text/plain":
-                            body = part.get_payload(decode=True).decode(errors="ignore")
-                            break
-                else:
-                    body = msg.get_payload(decode=True).decode(errors="ignore")
-
-                sentiment = analyze_sentiment(body)
-                urgency = determine_urgency(body)
-                customer, owner = extract_customer_and_owner(sender)
-
-                escalation = {
-                    "escalation_id": generate_escalation_id(),
-                    "timestamp": date,
-                    "sender": sender,
-                    "subject": subject,
-                    "issue": body,
-                    "sentiment": sentiment,
-                    "urgency": urgency,
-                    "status": "Open",
-                    "action_taken": "",
-                    "status_update_date": date,
-                    "priority": urgency,
-                    "customer": customer,
-                    "owner": owner
-                }
-                save_escalation(escalation)
-                send_ms_teams_alert(f"New escalation logged: {escalation['escalation_id']} from {sender}\nSubject: {subject}\nUrgency: {urgency}\nSentiment: {sentiment}")
-    mail.logout()
-
-# SLA Alert Checker
 def check_sla_and_alert():
-    df = load_escalations_df()
-    now = datetime.datetime.now(datetime.timezone.utc)
-    breached = df[(df['priority'] == "High") & (df['status'] == "Open")]
-    for _, row in breached.iterrows():
-        try:
-            last_update = datetime.datetime.strptime(row['status_update_date'], "%a, %d %b %Y %H:%M:%S %z")
-        except Exception:
-            continue
-        elapsed = now - last_update
-        if elapsed.total_seconds() > 48 * 3600:
-            send_ms_teams_alert(f"⚠️ SLA breach detected:\nID: {row['escalation_id']}\nCustomer: {row['customer']}\nOpen for: {elapsed.days} days\nIssue: {row['issue'][:200]}...")
+    df = fetch_cases()
+    now = datetime.datetime.now()
+    for _, row in df.iterrows():
+        if row['status'] != "Resolved" and row['urgency'] == "High":
+            last_update = datetime.datetime.fromisoformat(row['last_update'])
+            elapsed = now - last_update
+            if elapsed.total_seconds() > 3600:
+                st.warning(f"⚠️ SLA breach for {row['id']} - {row['customer']}: Last updated {elapsed.seconds // 60} mins ago")
 
-# Streamlit UI
+# App Logic
+
 def main():
-    st.set_page_config(page_title="EscalateAI", layout="wide")
-    st.title("📩 EscalateAI – Escalation Management Tool")
-    init_db()
-
-    menu = ["Escalation Dashboard", "Manual Entry", "Parse Emails"]
-    choice = st.sidebar.selectbox("Menu", menu)
-
-    if choice == "Escalation Dashboard":
-        df = load_escalations_df()
-        st.dataframe(df)
-        for idx, row in df.iterrows():
-            st.markdown(f"### {row['escalation_id']} – {row['subject']}")
-            st.markdown(f"**From:** {row['sender']}")
-            st.markdown(f"**Customer:** {row['customer']}, **Priority:** {row['priority']}, **Status:** {row['status']}")
-            st.markdown(f"**Sentiment:** {row['sentiment']}, **Urgency:** {row['urgency']}")
-            st.text_area("Issue", row['issue'], height=150, key=f"issue_{idx}")
-            new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row['status']), key=f"status_{idx}")
-            new_action = st.text_input("Action Taken", value=row['action_taken'], key=f"action_{idx}")
-            if st.button("Update", key=f"update_{idx}"):
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                c.execute("""
-                    UPDATE escalations SET status=?, action_taken=?, status_update_date=? WHERE escalation_id=?
-                """, (new_status, new_action, datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z"), row['escalation_id']))
-                conn.commit()
-                conn.close()
-                st.success("Updated successfully!")
-
-    elif choice == "Manual Entry":
-        with st.form("manual_form"):
-            sender = st.text_input("Sender Email")
-            subject = st.text_input("Subject")
-            issue = st.text_area("Issue")
-            submitted = st.form_submit_button("Submit")
-            if submitted:
-                sentiment = analyze_sentiment(issue)
-                urgency = determine_urgency(issue)
-                customer, owner = extract_customer_and_owner(sender)
-                escalation = {
-                    "escalation_id": generate_escalation_id(),
-                    "timestamp": datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z"),
-                    "sender": sender,
-                    "subject": subject,
-                    "issue": issue,
-                    "sentiment": sentiment,
-                    "urgency": urgency,
-                    "status": "Open",
-                    "action_taken": "",
-                    "status_update_date": datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z"),
-                    "priority": urgency,
-                    "customer": customer,
-                    "owner": owner
-                }
-                save_escalation(escalation)
-                send_ms_teams_alert(f"Manual escalation logged: {escalation['escalation_id']} from {sender}\nSubject: {subject}\nUrgency: {urgency}\nSentiment: {sentiment}")
-                st.success("Escalation logged successfully!")
-
-    elif choice == "Parse Emails":
-        email_user = st.text_input("Gmail ID")
-        email_pass = st.text_input("Gmail App Password", type="password")
-        if st.button("Parse Emails"):
-            parse_emails(email_user, email_pass)
-            st.success("Emails parsed and escalations logged!")
-
     check_sla_and_alert()
+
+    menu = ["Add Escalation", "Kanban Board", "Upload Bulk", "Download"]
+    choice = st.sidebar.selectbox("Select Action", menu)
+
+    if choice == "Add Escalation":
+        st.subheader("Add New Escalation")
+        customer = st.text_input("Customer Name")
+        issue = st.text_area("Issue Description")
+        owner = st.text_input("Owner")
+        if st.button("Submit Escalation"):
+            sid = generate_id()
+            sentiment, urgency, criticality = analyze_issue(issue)
+            timestamp = datetime.datetime.now().isoformat()
+            data = (sid, customer, issue, sentiment, urgency, criticality, "Open", "", owner, timestamp, timestamp)
+            save_case(data)
+            st.success(f"Escalation {sid} logged successfully.")
+
+    elif choice == "Kanban Board":
+        df = fetch_cases()
+        statuses = ["Open", "In Progress", "Resolved"]
+        cols = st.columns(len(statuses))
+        for i, status in enumerate(statuses):
+            with cols[i]:
+                st.markdown(f"### {status}")
+                for _, row in df[df["status"] == status].iterrows():
+                    with st.expander(f"{row['id']} - {row['customer']}"):
+                        st.write(f"**Issue:** {row['issue']}")
+                        st.write(f"**Sentiment:** {row['sentiment']}, **Urgency:** {row['urgency']}, **Criticality:** {row['criticality']}")
+                        action_taken = st.text_input("Action Taken", row['action_taken'], key=row['id']+"action")
+                        new_status = st.selectbox("Update Status", statuses, index=statuses.index(row['status']), key=row['id']+"status")
+                        if st.button("Update", key=row['id']+"update"):
+                            update_case_status(row['id'], new_status, action_taken)
+                            st.experimental_rerun()
+
+    elif choice == "Upload Bulk":
+        st.subheader("Upload Escalations from Excel")
+        uploaded_file = st.file_uploader("Choose Excel File", type=["xlsx"])
+        if uploaded_file:
+            bulk_df = pd.read_excel(uploaded_file)
+            for _, row in bulk_df.iterrows():
+                sid = generate_id()
+                issue = row['Issue']
+                sentiment, urgency, criticality = analyze_issue(issue)
+                timestamp = datetime.datetime.now().isoformat()
+                data = (sid, row['Customer'], issue, sentiment, urgency, criticality, "Open", "", row['Owner'], timestamp, timestamp)
+                save_case(data)
+            st.success("Bulk upload completed.")
+
+    elif choice == "Download":
+        df = fetch_cases()
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Escalation Data", csv, "escalateai_cases.csv", "text/csv")
 
 if __name__ == '__main__':
     main()
