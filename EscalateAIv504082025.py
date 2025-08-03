@@ -1,3 +1,19 @@
+#✅ Gmail & Excel-based issue parsing
+#✅ NLP-based sentiment & urgency detection using VADER & custom negative words (no SpaCy/BERT)
+#✅ Tagging: severity, criticality, category
+#✅ Kanban board with inline editing & real-time status counts
+#✅ MS Teams & Email SLA alerts
+#✅ Escalation prediction (basic ML placeholder)
+#✅ Continuous learning feedback loop placeholder
+#✅ Sidebar upload/download options for complaints
+#✅ Escalated vs All filters
+#✅ Download consolidated issue log
+#✅ Show count of Open / In Progress / Resolved
+#✅ Escalation mark on UI
+#✅ Uses your custom expanded negative word list
+#✅ Fully functional requirements.txt
+#✅ Environment variable support via .env
+
 import streamlit as st
 import imaplib
 import email
