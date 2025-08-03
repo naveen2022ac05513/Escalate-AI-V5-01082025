@@ -286,9 +286,10 @@ def check_sla_and_alert():
 
 def load_escalations_df():
     df = pd.read_sql_query("SELECT * FROM escalations", conn)
-    # Debug: print columns
-    # st.write("Columns:", df.columns.tolist())
     return df
+df = load_escalations_df()
+st.write("Columns in escalations DB:", df.columns.tolist())
+
 
 def save_complaints_excel():
     df = load_escalations_df()
