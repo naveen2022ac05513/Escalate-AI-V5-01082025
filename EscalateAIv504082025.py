@@ -44,34 +44,24 @@ conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 cursor = conn.cursor()
 
 def ensure_schema():
-    # Create table if not exists with all required columns
+    # Create table if not exists with all required columns (minimal schema)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS escalations (
             escalation_id TEXT PRIMARY KEY,
             customer TEXT,
             issue TEXT,
             date TEXT,
-            status TEXT,
-            sentiment TEXT,
-            priority TEXT,
-            escalation_flag INTEGER,
-            action_taken TEXT,
-            action_owner TEXT,
-            status_update_date TEXT,
-            user_feedback TEXT
+            status TEXT
         )
     """)
     conn.commit()
 
-    # Check columns present, add if missing (simple approach)
+    # Get existing columns
     cursor.execute("PRAGMA table_info(escalations)")
-    columns = [col[1] for col in cursor.fetchall()]
+    existing_cols = [col[1] for col in cursor.fetchall()]
+
+    # Columns to ensure, with type
     needed = {
-        "escalation_id": "TEXT PRIMARY KEY",
-        "customer": "TEXT",
-        "issue": "TEXT",
-        "date": "TEXT",
-        "status": "TEXT",
         "sentiment": "TEXT",
         "priority": "TEXT",
         "escalation_flag": "INTEGER",
@@ -80,10 +70,16 @@ def ensure_schema():
         "status_update_date": "TEXT",
         "user_feedback": "TEXT"
     }
+
     for col, col_type in needed.items():
-        if col not in columns:
-            cursor.execute(f"ALTER TABLE escalations ADD COLUMN {col} {col_type}")
-    conn.commit()
+        if col not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE escalations ADD COLUMN {col} {col_type}")
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                # Log but ignore if column exists or other errors
+                print(f"Could not add column {col}: {e}")
+
 
 ensure_schema()
 
