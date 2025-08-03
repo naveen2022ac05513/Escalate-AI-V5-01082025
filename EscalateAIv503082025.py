@@ -15,17 +15,19 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 
-# Load environment variables from .env file
+# Load environment variables from .env file (email credentials, webhook URLs, team members)
 load_dotenv()
 
-EMAIL = os.getenv("EMAIL_USER")
-APP_PASSWORD = os.getenv("EMAIL_PASS")
-IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
-MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")
+# Fetch environment variables for email and MS Teams integration
+EMAIL = os.getenv("EMAIL_USER")                   # Gmail user email
+APP_PASSWORD = os.getenv("EMAIL_PASS")            # Gmail app-specific password
+IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")  # IMAP server, default Gmail
+MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")   # MS Teams incoming webhook URL
 
-# Define support team members for assignment
+# Define support team members for round-robin assignment, default if not set
 TEAM_MEMBERS = os.getenv("TEAM_MEMBERS", "Alice,Bob,Charlie").split(',')
 
+# List of keywords to help identify negative or critical issues (used in NLP analysis)
 NEGATIVE_KEYWORDS = [
     # Technical Failures & Product Malfunction
     "fail", "break", "crash", "defect", "fault", "degrade", "damage",
@@ -44,37 +46,44 @@ NEGATIVE_KEYWORDS = [
     "terminate", "penalty"
 ]
 
-# Setup database connection and create table
-conn = sqlite3.connect("escalations.db", check_same_thread=False)
+# Initialize SQLite DB connection (local file escalations.db)
+conn = sqlite3.connect("escalations.db", check_same_thread=False)  # Thread-safe for Streamlit
 cursor = conn.cursor()
+
+# Create escalations table if it doesn't exist yet
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS escalations (
-    escalation_id TEXT PRIMARY KEY,
-    customer TEXT,
-    issue TEXT,
-    date TEXT,
-    status TEXT,
-    sentiment TEXT,
-    priority TEXT,
-    escalation_flag INTEGER,
-    action_taken TEXT,
-    action_owner TEXT,
-    status_update_date TEXT,
-    assigned_to TEXT,
-    resolution_time_minutes INTEGER,
-    manual_entry INTEGER,
-    user_feedback TEXT
+    escalation_id TEXT PRIMARY KEY,        -- Unique escalation ID
+    customer TEXT,                         -- Customer email or identifier
+    issue TEXT,                           -- Issue description text (limited length)
+    date TEXT,                            -- Date/time of escalation
+    status TEXT,                          -- Escalation status (Open/In Progress/Resolved)
+    sentiment TEXT,                       -- Sentiment label (Positive/Negative)
+    priority TEXT,                        -- Priority level (High/Low)
+    escalation_flag INTEGER,              -- Flag (1=high priority escalation, 0 otherwise)
+    action_taken TEXT,                    -- Action taken notes by support
+    action_owner TEXT,                    -- Person who took action
+    status_update_date TEXT,              -- Last update datetime
+    assigned_to TEXT,                     -- Assigned support team member
+    resolution_time_minutes INTEGER,     -- Resolution duration in minutes
+    manual_entry INTEGER,                 -- Flag if entered manually (1) or from email (0)
+    user_feedback TEXT                   -- User feedback on AI accuracy or resolution
 )
 """)
-conn.commit()
+conn.commit()  # Save changes
 
+# Initialize VADER sentiment analyzer
 analyzer = SentimentIntensityAnalyzer()
 
-# Load or initialize model and vectorizer
+# Paths for saving/loading the trained ML model and vectorizer
 MODEL_PATH = "escalation_model.joblib"
 VECTORIZER_PATH = "vectorizer.joblib"
 
 def load_model_and_vectorizer():
+    """
+    Attempt to load saved ML model and TF-IDF vectorizer from disk.
+    Returns (model, vectorizer) or (None, None) if not found.
+    """
     try:
         model = joblib.load(MODEL_PATH)
         vectorizer = joblib.load(VECTORIZER_PATH)
@@ -83,29 +92,40 @@ def load_model_and_vectorizer():
         return None, None
 
 def save_model_and_vectorizer(model, vectorizer):
+    """
+    Save trained ML model and vectorizer to disk for persistence.
+    """
     joblib.dump(model, MODEL_PATH)
     joblib.dump(vectorizer, VECTORIZER_PATH)
 
+# Load model/vectorizer at startup
 model, vectorizer = load_model_and_vectorizer()
 
-# Round-robin team assignment tracker stored in-memory (can persist to DB/file if needed)
+# Counter for round-robin team assignment (can be improved to persistent)
 team_assignment_counter = 0
 
 def assign_team_member():
+    """
+    Assign support team members in round-robin fashion to distribute workload.
+    """
     global team_assignment_counter
     assigned = TEAM_MEMBERS[team_assignment_counter % len(TEAM_MEMBERS)]
     team_assignment_counter += 1
     return assigned
 
 def fetch_gmail_emails():
+    """
+    Connects to Gmail via IMAP, fetches unread emails, extracts content,
+    marks them read, and returns list of dict with customer, issue, subject, date.
+    """
     if not EMAIL or not APP_PASSWORD:
         st.error("Gmail credentials not set in environment variables.")
         return []
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        mail.login(EMAIL, APP_PASSWORD)
-        mail.select("inbox")
-        result, data = mail.search(None, "UNSEEN")
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER)     # Connect securely
+        mail.login(EMAIL, APP_PASSWORD)           # Login to mailbox
+        mail.select("inbox")                       # Select inbox folder
+        result, data = mail.search(None, "UNSEEN")  # Search unseen emails
         if result != "OK":
             st.info("No new emails found.")
             mail.logout()
@@ -114,13 +134,14 @@ def fetch_gmail_emails():
         email_ids = data[0].split()
         emails = []
 
-        for eid in email_ids[-10:]:  # last 10 unseen emails
-            res, msg_data = mail.fetch(eid, "(RFC822)")
+        # Process last 10 unseen emails to limit load
+        for eid in email_ids[-10:]:
+            res, msg_data = mail.fetch(eid, "(RFC822)")  # Fetch full email data
             if res != "OK":
                 continue
-            msg = email.message_from_bytes(msg_data[0][1])
+            msg = email.message_from_bytes(msg_data[0][1])  # Parse raw bytes into message
 
-            # Decode subject
+            # Decode subject safely
             subject, encoding = decode_header(msg.get("Subject"))[0]
             if isinstance(subject, bytes):
                 subject = subject.decode(encoding or "utf-8", errors="ignore")
@@ -128,7 +149,7 @@ def fetch_gmail_emails():
             from_ = msg.get("From")
             date = msg.get("Date")
 
-            # Extract plain text body
+            # Extract plain text body from multipart email
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
@@ -163,39 +184,54 @@ def fetch_gmail_emails():
         return []
 
 def analyze_issue(issue_text):
+    """
+    Perform basic NLP analysis using VADER sentiment and keyword matching
+    to assign sentiment, priority and escalation flag.
+    """
     text_lower = issue_text.lower()
-    vs = analyzer.polarity_scores(issue_text)
+    vs = analyzer.polarity_scores(issue_text)        # VADER sentiment scores
     sentiment = "Positive" if vs["compound"] >= 0 else "Negative"
+    # Count negative keywords occurrence to decide priority
     neg_count = sum(1 for kw in NEGATIVE_KEYWORDS if kw in text_lower)
     priority = "High" if sentiment == "Negative" and neg_count >= 2 else "Low"
     escalation_flag = 1 if priority == "High" else 0
     return sentiment, priority, escalation_flag
 
 def predict_priority(issue_text):
+    """
+    Use trained ML model to predict priority from issue text.
+    Returns predicted label 'High' or 'Low', or None if model unavailable.
+    """
     global model, vectorizer
     if model is None or vectorizer is None:
         return None
     X = vectorizer.transform([issue_text])
     pred = model.predict(X)[0]
-    return pred  # Expected 'High' or 'Low'
+    return pred  # 'High' or 'Low'
 
 def save_emails_to_db(emails, manual_flag=0):
+    """
+    Save a list of email escalations into the database.
+    Assign escalation IDs, analyze sentiment/priority, assign team member,
+    send MS Teams alert if needed.
+    """
     cursor.execute("SELECT COUNT(*) FROM escalations")
     count = cursor.fetchone()[0]
     new_entries = 0
     for e in emails:
+        # Avoid duplicates by customer+issue
         cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (e['customer'], e['issue'][:500]))
         if cursor.fetchone():
             continue
         count += 1
         esc_id = f"SESICE-{count+250000}"
 
-        # Use prediction model if available, else fallback to analyze_issue
+        # Use ML prediction if model available, else fallback to keyword analysis
         pred_priority = predict_priority(e['issue'])
         if pred_priority:
             priority = pred_priority
             escalation_flag = 1 if priority == "High" else 0
-            sentiment = "Negative" if priority == "High" else "Positive"  # Simplified for demo
+            sentiment = "Negative" if priority == "High" else "Positive"
         else:
             sentiment, priority, escalation_flag = analyze_issue(e['issue'])
 
@@ -208,6 +244,8 @@ def save_emails_to_db(emails, manual_flag=0):
         """, (esc_id, e['customer'], e['issue'][:500], e['date'], "Open", sentiment, priority, escalation_flag,
               "", "", now, assigned_to, None, manual_flag, ""))
         new_entries += 1
+
+        # Alert MS Teams if new high priority escalation
         if escalation_flag == 1:
             send_ms_teams_alert(
                 f"🚨 New HIGH priority escalation detected:\nID: {esc_id}\nCustomer: {e['customer']}\nIssue: {e['issue'][:200]}...\nAssigned to: {assigned_to}")
@@ -215,13 +253,14 @@ def save_emails_to_db(emails, manual_flag=0):
     return new_entries
 
 def send_ms_teams_alert(message):
+    """
+    Send a plain text alert message to MS Teams channel using incoming webhook.
+    """
     if not MS_TEAMS_WEBHOOK_URL:
         st.warning("MS Teams webhook URL not set; cannot send alerts.")
         return
     headers = {"Content-Type": "application/json"}
-    payload = {
-        "text": message
-    }
+    payload = {"text": message}
     try:
         response = requests.post(MS_TEAMS_WEBHOOK_URL, json=payload, headers=headers)
         if response.status_code != 200:
@@ -230,13 +269,21 @@ def send_ms_teams_alert(message):
         st.error(f"Error sending MS Teams alert: {e}")
 
 def load_escalations_df():
+    """
+    Load all escalations from DB as a pandas DataFrame for display or processing.
+    """
     df = pd.read_sql_query("SELECT * FROM escalations", conn)
     return df
 
 def upload_excel_and_analyze(file):
+    """
+    Process uploaded Excel file, map columns for customer, issue, date,
+    analyze priority/sentiment, save to DB, assign team and alert if high priority.
+    """
     try:
         df = pd.read_excel(file)
         df.columns = [c.lower().strip() for c in df.columns]
+        # Attempt to detect appropriate columns
         customer_col = next((c for c in df.columns if "customer" in c or "email" in c), None)
         issue_col = next((c for c in df.columns if "issue" in c or "text" in c or "complaint" in c), None)
         date_col = next((c for c in df.columns if "date" in c), None)
@@ -253,13 +300,14 @@ def upload_excel_and_analyze(file):
             customer = str(row[customer_col])
             issue = str(row[issue_col])
             date = str(row[date_col]) if date_col and pd.notna(row[date_col]) else datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+            # Check duplicate
             cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (customer, issue[:500]))
             if cursor.fetchone():
                 continue
             existing_count += 1
             esc_id = f"SESICE-{existing_count+250000}"
 
-            # Use prediction model if available
+            # Use ML model if available
             pred_priority = predict_priority(issue)
             if pred_priority:
                 priority = pred_priority
@@ -277,6 +325,7 @@ def upload_excel_and_analyze(file):
             """, (esc_id, customer, issue[:500], date, "Open", sentiment, priority, escalation_flag,
                   "", "", now, assigned_to, None, 0, ""))
             count += 1
+            # Alert MS Teams for high priority
             if escalation_flag == 1:
                 send_ms_teams_alert(
                     f"🚨 New HIGH priority escalation detected:\nID: {esc_id}\nCustomer: {customer}\nIssue: {issue[:200]}...\nAssigned to: {assigned_to}")
@@ -287,6 +336,9 @@ def upload_excel_and_analyze(file):
         return 0
 
 def manual_entry_process(customer, issue):
+    """
+    Process manual escalation entry from sidebar form.
+    """
     if not customer or not issue:
         st.sidebar.error("Please fill customer and issue.")
         return False
@@ -294,7 +346,7 @@ def manual_entry_process(customer, issue):
     count = cursor.fetchone()[0]
     esc_id = f"SESICE-{count+250001}"
 
-    # Use prediction model if available
+    # Use ML prediction if available
     pred_priority = predict_priority(issue)
     if pred_priority:
         priority = pred_priority
@@ -319,6 +371,9 @@ def manual_entry_process(customer, issue):
     return True
 
 def update_resolution_time(escalation_id):
+    """
+    Calculate and update resolution time (in minutes) for resolved escalations.
+    """
     now = datetime.datetime.now(datetime.timezone.utc)
     cursor.execute("SELECT date FROM escalations WHERE escalation_id=?", (escalation_id,))
     row = cursor.fetchone()
@@ -334,11 +389,15 @@ def update_resolution_time(escalation_id):
     conn.commit()
 
 def display_kanban_card(row):
+    """
+    Render individual escalation cards in Kanban columns with details and editable fields.
+    """
     esc_id = row['escalation_id']
     sentiment = row['sentiment']
     priority = row['priority']
     status = row['status']
 
+    # Define colors for UI badges based on priority, status and sentiment
     sentiment_colors = {"Positive": "#27ae60", "Negative": "#e74c3c"}
     priority_colors = {"High": "#c0392b", "Low": "#27ae60"}
     status_colors = {"Open": "#f1c40f", "In Progress": "#2980b9", "Resolved": "#2ecc71"}
@@ -347,6 +406,7 @@ def display_kanban_card(row):
     status_color = status_colors.get(status, "#bdc3c7")
     sentiment_color = sentiment_colors.get(sentiment, "#7f8c8d")
 
+    # Header with colored border and status badges
     header_html = f"""
     <div style="
         border-left: 6px solid {border_color};
@@ -356,89 +416,68 @@ def display_kanban_card(row):
         {esc_id} &nbsp; 
         <span style='color:{sentiment_color}; font-weight:bold;'>● {sentiment}</span> / 
         <span style='color:{priority_colors.get(priority, '#000')}; font-weight:bold;'>■ {priority}</span> / 
-        <span style='color:{status_color}; font-weight:bold;'>{status}</span> / 
-        <span style='font-size:small; color:#34495e;'>Assigned: {row.get('assigned_to', '')}</span>
-    </div>
-    """
+        <span style='color:{status_color}; font-weight:bold;'>{status}</span>
+    </div>"""
 
     st.markdown(header_html, unsafe_allow_html=True)
 
-    with st.expander("Details", expanded=False):
-        st.markdown(f"**Customer:** {row['customer']}")
-        st.markdown(f"**Issue:** {row['issue']}")
-        st.markdown(f"**Date:** {row['date']}")
-        st.markdown(f"**User Feedback:** {row.get('user_feedback', '')}")
-        st.markdown(f"**Resolution Time (minutes):** {row.get('resolution_time_minutes', 'N/A')}")
+    # Display issue text truncated for brevity
+    st.write(row['issue'][:200] + ("..." if len(row['issue']) > 200 else ""))
 
-        new_status = st.selectbox(
-            "Update Status",
-            ["Open", "In Progress", "Resolved"],
-            index=["Open", "In Progress", "Resolved"].index(status),
-            key=f"{esc_id}_status"
-        )
-        new_action_taken = st.text_area(
-            "Action Taken",
-            value=row['action_taken'] or "",
-            key=f"{esc_id}_action"
-        )
-        new_action_owner = st.text_input(
-            "Action Owner",
-            value=row['action_owner'] or "",
-            key=f"{esc_id}_owner"
-        )
-        new_user_feedback = st.text_input(
-            "User Feedback (e.g. correct prediction?)",
-            value=row.get('user_feedback', "") or "",
-            key=f"{esc_id}_feedback"
-        )
+    # Editable fields for status, action taken, action owner
+    new_status = st.selectbox("Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(status), key=f"status_{esc_id}")
+    action_taken = st.text_area("Action Taken", value=row.get('action_taken', ""), key=f"action_{esc_id}")
+    action_owner = st.text_input("Action Owner", value=row.get('action_owner', ""), key=f"owner_{esc_id}")
 
-        if st.button("Save Updates", key=f"save_{esc_id}"):
-            now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
-            cursor.execute("""
-                UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?, user_feedback=?
-                WHERE escalation_id=?
-            """, (new_status, new_action_taken, new_action_owner, now, new_user_feedback, esc_id))
-            if new_status == "Resolved":
-                update_resolution_time(esc_id)
-            conn.commit()
-            st.success("Updated successfully!")
-            st.experimental_rerun()
+    # Save button to update DB values inline
+    if st.button("Save Updates", key=f"save_{esc_id}"):
+        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+        cursor.execute("""
+            UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?
+            WHERE escalation_id=?
+        """, (new_status, action_taken, action_owner, now_str, esc_id))
 
-def save_complaints_excel():
-    df = load_escalations_df()
-    filename = "complaints_data.xlsx"
-    df.to_excel(filename, index=False)
-    return filename
+        # If marked Resolved, update resolution time in DB
+        if new_status == "Resolved":
+            update_resolution_time(esc_id)
+        conn.commit()
+        st.success(f"Updated {esc_id}")
+        st.experimental_rerun()  # Refresh UI to reflect changes
 
 def check_sla_and_alert():
-    # SLA breach if high priority & Open status for >10 minutes (testing)
+    """
+    Check for high priority escalations open longer than threshold (e.g., 10 minutes)
+    and send MS Teams alert for SLA breach.
+    """
     df = load_escalations_df()
-    now = datetime.datetime.now(datetime.timezone.utc)  # timezone aware now
-    breached = df[
-        (df['priority'] == "High") &
-        (df['status'] == "Open")
-    ]
-
+    now = datetime.datetime.now(datetime.timezone.utc)
     alerts_sent = 0
-    for _, row in breached.iterrows():
+    for _, row in df.iterrows():
+        if row['escalation_flag'] != 1 or row['status'] == "Resolved":
+            continue
         try:
             last_update = datetime.datetime.strptime(row['status_update_date'], "%a, %d %b %Y %H:%M:%S %z")
         except Exception:
             continue
-        diff = (now - last_update).total_seconds() / 60
-        if diff > 10:
+        diff = (now - last_update).total_seconds() / 60  # Minutes elapsed since last update
+        if diff > 10:  # SLA threshold minutes
             send_ms_teams_alert(f"⚠️ SLA Breach Alert for escalation {row['escalation_id']} - Not resolved for {int(diff)} minutes.")
             alerts_sent += 1
     if alerts_sent > 0:
         st.info(f"{alerts_sent} SLA breach alert(s) sent.")
 
 def train_escalation_model():
+    """
+    Train a random forest model on historical escalation issues to predict priority.
+    Uses TF-IDF vectorization on issue text.
+    Displays classification report on test data.
+    """
     df = load_escalations_df()
     if df.empty:
         st.warning("No data to train model.")
         return
 
-    # We will train on issue text to predict priority (High or Low)
+    # Filter only High/Low priority for classification
     df = df[df['priority'].isin(['High', 'Low'])]
     X = df['issue']
     y = df['priority']
@@ -456,12 +495,16 @@ def train_escalation_model():
     st.write("Model trained. Classification report:")
     st.json(report)
 
-    # Save model & vectorizer
+    # Save model and vectorizer globally and on disk
     save_model_and_vectorizer(clf, vectorizer)
     global model, vectorizer
     model, vectorizer = clf, vectorizer
 
 def compare_resolution_times_report():
+    """
+    Compare average resolution times in minutes between manual and AI-assisted escalations.
+    Displays summary statistics in Streamlit.
+    """
     df = load_escalations_df()
     manual = df[df['manual_entry'] == 1]['resolution_time_minutes'].dropna()
     ai_assisted = df[df['manual_entry'] == 0]['resolution_time_minutes'].dropna()
@@ -474,53 +517,66 @@ def compare_resolution_times_report():
     st.write(f"Average AI-assisted entry resolution time: {avg_ai:.2f}" if avg_ai else "No AI-assisted data")
 
 def main():
-    st.title("EscalateAI - AI-Powered Escalation Management")
+    """
+    Main Streamlit app function to handle UI, sidebar, user interactions,
+    and display the Kanban board with escalations categorized by status.
+    """
+    st.title("EscalateAI - AI-Powered Escalation Management")  # Main title
 
-    # Sidebar
+    # Sidebar for actions and manual entry
     st.sidebar.header("Actions")
 
+    # Button to fetch and analyze new emails from Gmail
     if st.sidebar.button("Fetch & Analyze Latest Emails"):
         emails = fetch_gmail_emails()
         if emails:
             count = save_emails_to_db(emails, manual_flag=0)
             st.sidebar.success(f"Fetched & saved {count} new escalations from emails.")
 
+    # Upload Excel for bulk import of escalations
     uploaded_file = st.sidebar.file_uploader("Upload Excel for Bulk Upload", type=['xls', 'xlsx'])
     if uploaded_file:
         count = upload_excel_and_analyze(uploaded_file)
         if count:
             st.sidebar.success(f"Imported {count} escalations from Excel.")
 
+    # Manual entry form for adding escalations
     st.sidebar.header("Manual Entry")
     cust = st.sidebar.text_input("Customer Email")
     issue = st.sidebar.text_area("Issue Description")
     if st.sidebar.button("Add Escalation Manually"):
         manual_entry_process(cust, issue)
 
+    # Train escalation prediction ML model
     if st.sidebar.button("Train Escalation Prediction Model"):
         train_escalation_model()
 
+    # Check SLA breaches and send MS Teams alerts
     if st.sidebar.button("Check SLA Breaches and Send Alerts"):
         check_sla_and_alert()
 
+    # Generate report comparing resolution times manual vs AI
     st.sidebar.header("Reports")
     if st.sidebar.button("Compare Resolution Times: Manual vs AI"):
         compare_resolution_times_report()
 
+    # Load all escalations from DB
     df = load_escalations_df()
 
+    # Filter option for showing all escalations or only escalated (high priority) ones
     filter_option = st.radio("Filter Escalations:", ["All", "Escalated Only"])
-
     if filter_option == "Escalated Only":
         df = df[df['escalation_flag'] == 1]
 
+    # Count escalations by status for Kanban columns
     status_counts = df['status'].value_counts().to_dict()
     open_count = status_counts.get("Open", 0)
     inprogress_count = status_counts.get("In Progress", 0)
     resolved_count = status_counts.get("Resolved", 0)
 
-    # Kanban board columns
+    # Display Kanban columns using Streamlit columns
     col1, col2, col3 = st.columns(3)
+
     with col1:
         st.markdown(f"### 🟡 Open ({open_count})")
         for _, row in df[df['status'] == "Open"].iterrows():
