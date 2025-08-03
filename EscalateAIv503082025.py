@@ -326,10 +326,12 @@ def render_kanban():
     st.markdown(
         """
         <style>
-        /* Sticky container for title and buttons */
-        .sticky-header {
-            position: sticky;
+        /* Fixed header container */
+        .fixed-header {
+            position: fixed;
             top: 0;
+            left: 0;
+            right: 0;
             background-color: white;
             padding: 10px 20px;
             z-index: 9999;
@@ -339,16 +341,19 @@ def render_kanban():
             justify-content: space-between;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
-        .title {
+        .fixed-header h1 {
             margin: 0;
             font-weight: bold;
             font-size: 1.8rem;
-            flex-grow: 1;
             user-select: none;
         }
         .button-group > div {
             display: inline-block;
             margin-left: 15px;
+        }
+        /* Add top padding to body content to avoid overlap */
+        .main-content {
+            padding-top: 80px; /* height of fixed header + some padding */
         }
         </style>
         """,
@@ -356,15 +361,15 @@ def render_kanban():
     )
 
     st.markdown(
-        '''
-        <div class="sticky-header">
-            <h1 class="title">🚀 EscalateAI - Escalations & Complaints Kanban Board</h1>
+        """
+        <div class="fixed-header">
+            <h1>🚀 EscalateAI - Escalations & Complaints Kanban Board</h1>
             <div class="button-group">
-        ''',
+        """,
         unsafe_allow_html=True,
     )
 
-    col1, col2 = st.columns([1,1])
+    col1, col2 = st.columns([1, 1])
 
     with col1:
         if st.button("📧 Fetch Emails Manually"):
@@ -383,7 +388,10 @@ def render_kanban():
             else:
                 st.info("No SLA breaches detected at this time.")
 
-    st.markdown("</div></div>", unsafe_allow_html=True)  # Close button-group and sticky-header divs
+    st.markdown("</div></div>", unsafe_allow_html=True)  # close button-group and fixed-header divs
+
+    # Now wrap the kanban content inside a div with padding-top so it is not hidden behind fixed header
+    st.markdown('<div class="main-content">', unsafe_allow_html=True)
 
     df = load_escalations_df()
     filter_choice = st.radio("Filter Escalations:", ["All", "Escalated Only"])
@@ -412,6 +420,8 @@ def render_kanban():
         for _, row in df[df['status'] == 'Resolved'].iterrows():
             display_kanban_card(row)
 
+    st.markdown('</div>', unsafe_allow_html=True)
+
 def main():
     st.sidebar.header("📥 Upload Complaints Excel File")
     uploaded_file = st.sidebar.file_uploader("Upload Excel file", type=["xlsx", "xls"])
@@ -423,18 +433,20 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.header("➕ Manual Escalation Entry")
     customer = st.sidebar.text_input("Customer Email/Name")
-    issue = st.sidebar.text_area("Issue / Complaint")
-    if st.sidebar.button("Add & Analyze Manual Entry"):
-        manual_entry_process(customer, issue)
+    issue = st.sidebar.text_area("Issue Description")
+    if st.sidebar.button("Add Escalation Manually"):
+        if manual_entry_process(customer, issue):
+            st.experimental_rerun()
 
     st.sidebar.markdown("---")
-    if st.sidebar.button("Download Email Complaints Excel"):
-        filepath = save_complaints_excel()
-        with open(filepath, "rb") as f:
+    st.sidebar.header("💾 Export")
+    if st.sidebar.button("Download Escalations as Excel"):
+        filename = save_complaints_excel()
+        with open(filename, "rb") as f:
             st.sidebar.download_button(
-                label="Download Complaints Data",
+                label="Download Excel",
                 data=f,
-                file_name="complaints_data.xlsx",
+                file_name=filename,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
