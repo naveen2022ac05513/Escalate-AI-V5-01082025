@@ -11,9 +11,9 @@ from dotenv import load_dotenv
 import requests
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-import joblib
+import pickle
 
-# Load environment variables
+# Load environment variables from .env file (EMAIL_USER, EMAIL_PASS, EMAIL_SERVER, MS_TEAMS_WEBHOOK_URL)
 load_dotenv()
 
 EMAIL = os.getenv("EMAIL_USER")
@@ -39,10 +39,9 @@ NEGATIVE_KEYWORDS = [
     "terminate", "penalty"
 ]
 
-# Database setup: SQLite for escalations
+# --- Database Setup ---
 conn = sqlite3.connect("escalations.db", check_same_thread=False)
 cursor = conn.cursor()
-
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS escalations (
     escalation_id TEXT PRIMARY KEY,
@@ -61,32 +60,15 @@ CREATE TABLE IF NOT EXISTS escalations (
 """)
 conn.commit()
 
+# Sentiment Analyzer instance
 analyzer = SentimentIntensityAnalyzer()
 
-# Load or initialize escalation prediction model artifacts
-MODEL_PATH = "escalation_model.joblib"
-VECTORIZER_PATH = "vectorizer.joblib"
-
-# Initialize global model and vectorizer variables
+# Global ML model and vectorizer (initialized later)
 model = None
 vectorizer = None
 
-def load_model_and_vectorizer():
-    """Load or initialize the escalation prediction model and vectorizer."""
-    global model, vectorizer
-    try:
-        vectorizer = joblib.load(VECTORIZER_PATH)
-        model = joblib.load(MODEL_PATH)
-    except:
-        # If not found, initialize dummy model and vectorizer (for demo)
-        vectorizer = TfidfVectorizer(stop_words='english', max_features=5000)
-        model = LogisticRegression()
-        # Model training/loading should be done separately with historical data
-
-load_model_and_vectorizer()
-
+# --------- Email fetching and processing ---------
 def fetch_gmail_emails():
-    """Fetch latest unseen emails from Gmail inbox."""
     if not EMAIL or not APP_PASSWORD:
         st.error("Gmail credentials not set in environment variables.")
         return []
@@ -103,8 +85,7 @@ def fetch_gmail_emails():
         email_ids = data[0].split()
         emails = []
 
-        # Limit to last 10 unseen emails for performance
-        for eid in email_ids[-10:]:
+        for eid in email_ids[-10:]:  # last 10 unseen emails
             res, msg_data = mail.fetch(eid, "(RFC822)")
             if res != "OK":
                 continue
@@ -152,11 +133,8 @@ def fetch_gmail_emails():
         st.error(f"Error fetching emails: {e}")
         return []
 
+# --------- Issue sentiment and priority analysis ---------
 def analyze_issue(issue_text):
-    """
-    Analyze sentiment, priority, escalation flag for given issue text.
-    Uses VADER sentiment and keyword matching.
-    """
     text_lower = issue_text.lower()
     vs = analyzer.polarity_scores(issue_text)
     sentiment = "Positive" if vs["compound"] >= 0 else "Negative"
@@ -165,65 +143,31 @@ def analyze_issue(issue_text):
     escalation_flag = 1 if priority == "High" else 0
     return sentiment, priority, escalation_flag
 
-def predict_escalation(issue_text):
-    """
-    Use ML model to predict escalation likelihood.
-    Returns True if predicted escalation.
-    """
-    global model, vectorizer
-    if not model or not vectorizer:
-        return False  # Model not loaded, default no escalation
-
-    try:
-        vect = vectorizer.transform([issue_text])
-        pred = model.predict(vect)
-        return bool(pred[0])
-    except Exception as e:
-        st.warning(f"Prediction error: {e}")
-        return False
-
+# --------- Save emails to DB with analysis ---------
 def save_emails_to_db(emails):
-    """
-    Save fetched emails to the SQLite database,
-    avoiding duplicates by checking customer and issue text.
-    Sends MS Teams alerts for high priority escalations.
-    """
     cursor.execute("SELECT COUNT(*) FROM escalations")
     count = cursor.fetchone()[0]
     new_entries = 0
     for e in emails:
-        # Check for duplicate (customer + issue)
         cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (e['customer'], e['issue'][:500]))
         if cursor.fetchone():
             continue
         count += 1
         esc_id = f"SESICE-{count+250000}"
         sentiment, priority, escalation_flag = analyze_issue(e['issue'])
-
-        # Additionally apply ML model prediction
-        ml_pred = predict_escalation(e['issue'])
-        if ml_pred:
-            escalation_flag = 1
-            priority = "High"
-
         now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
         cursor.execute("""
             INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner, status_update_date, user_feedback)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (esc_id, e['customer'], e['issue'][:500], e['date'], "Open", sentiment, priority, escalation_flag, "", "", now, ""))
         new_entries += 1
-
-        # Send MS Teams alert if escalation flagged
         if escalation_flag == 1:
             send_ms_teams_alert(f"🚨 New HIGH priority escalation detected:\nID: {esc_id}\nCustomer: {e['customer']}\nIssue: {e['issue'][:200]}...")
-
     conn.commit()
     return new_entries
 
+# --------- MS Teams alert sending ---------
 def send_ms_teams_alert(message):
-    """
-    Send alert message to MS Teams channel via webhook.
-    """
     if not MS_TEAMS_WEBHOOK_URL:
         st.warning("MS Teams webhook URL not set; cannot send alerts.")
         return
@@ -236,18 +180,13 @@ def send_ms_teams_alert(message):
     except Exception as e:
         st.error(f"Error sending MS Teams alert: {e}")
 
+# --------- Load escalations from DB ---------
 def load_escalations_df():
-    """
-    Load escalation records from DB as Pandas DataFrame.
-    """
     df = pd.read_sql_query("SELECT * FROM escalations", conn)
     return df
 
+# --------- Upload Excel complaints and analyze ---------
 def upload_excel_and_analyze(file):
-    """
-    Process uploaded Excel file containing complaints,
-    extract relevant columns, analyze and save to DB.
-    """
     try:
         df = pd.read_excel(file)
         df.columns = [c.lower().strip() for c in df.columns]
@@ -273,12 +212,6 @@ def upload_excel_and_analyze(file):
             existing_count += 1
             esc_id = f"SESICE-{existing_count+250000}"
             sentiment, priority, escalation_flag = analyze_issue(issue)
-
-            # ML prediction override
-            if predict_escalation(issue):
-                escalation_flag = 1
-                priority = "High"
-
             now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
             cursor.execute("""
                 INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner, status_update_date, user_feedback)
@@ -293,10 +226,8 @@ def upload_excel_and_analyze(file):
         st.error(f"Error processing uploaded Excel: {e}")
         return 0
 
+# --------- Manual escalation entry ---------
 def manual_entry_process(customer, issue):
-    """
-    Allow manual entry of escalation, analyze and save.
-    """
     if not customer or not issue:
         st.sidebar.error("Please fill customer and issue.")
         return False
@@ -304,11 +235,6 @@ def manual_entry_process(customer, issue):
     count = cursor.fetchone()[0]
     esc_id = f"SESICE-{count+250001}"
     sentiment, priority, escalation_flag = analyze_issue(issue)
-
-    if predict_escalation(issue):
-        escalation_flag = 1
-        priority = "High"
-
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
     cursor.execute("""
         INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner, status_update_date, user_feedback)
@@ -320,17 +246,13 @@ def manual_entry_process(customer, issue):
         send_ms_teams_alert(f"🚨 New HIGH priority escalation detected:\nID: {esc_id}\nCustomer: {customer}\nIssue: {issue[:200]}...")
     return True
 
+# --------- Display each escalation card ---------
 def display_kanban_card(row):
-    """
-    Display a single escalation card with color coding and expandable details.
-    Allows status update, action taken, and action owner editing with save button.
-    """
     esc_id = row['escalation_id']
     sentiment = row['sentiment']
     priority = row['priority']
     status = row['status']
 
-    # Colors for sentiment, priority, and status
     sentiment_colors = {"Positive": "#27ae60", "Negative": "#e74c3c"}
     priority_colors = {"High": "#c0392b", "Low": "#27ae60"}
     status_colors = {"Open": "#f1c40f", "In Progress": "#2980b9", "Resolved": "#2ecc71"}
@@ -339,14 +261,13 @@ def display_kanban_card(row):
     status_color = status_colors.get(status, "#bdc3c7")
     sentiment_color = sentiment_colors.get(sentiment, "#7f8c8d")
 
-    # Card header with colored border and labels
+    # Card header with color indicators
     header_html = f"""
     <div style="
         border-left: 6px solid {border_color};
         padding-left: 10px;
         margin-bottom: 10px;
-        font-weight:bold;
-        font-size: 14px;">
+        font-weight:bold;">
         {esc_id} &nbsp; 
         <span style='color:{sentiment_color}; font-weight:bold;'>● {sentiment}</span> / 
         <span style='color:{priority_colors.get(priority, '#000')}; font-weight:bold;'>■ {priority}</span> / 
@@ -355,12 +276,12 @@ def display_kanban_card(row):
     """
     st.markdown(header_html, unsafe_allow_html=True)
 
+    # Expandable details with editable fields
     with st.expander("Details", expanded=False):
         st.markdown(f"**Customer:** {row['customer']}")
         st.markdown(f"**Issue:** {row['issue']}")
         st.markdown(f"**Date:** {row['date']}")
 
-        # Inputs for updating status, action taken, owner
         new_status = st.selectbox(
             "Update Status",
             ["Open", "In Progress", "Resolved"],
@@ -377,34 +298,39 @@ def display_kanban_card(row):
             value=row['action_owner'] or "",
             key=f"{esc_id}_owner"
         )
+        new_feedback = st.text_area(
+            "User Feedback",
+            value=row.get('user_feedback') or "",
+            key=f"{esc_id}_feedback"
+        )
 
+        # Save updates button with unique key to avoid duplication errors
         if st.button("Save Updates", key=f"save_{esc_id}"):
             now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
             cursor.execute("""
-                UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?
+                UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?, user_feedback=?
                 WHERE escalation_id=?
-            """, (new_status, new_action_taken, new_action_owner, now, esc_id))
+            """, (new_status, new_action_taken, new_action_owner, now, new_feedback, esc_id))
             conn.commit()
             st.success("Updated successfully!")
             st.experimental_rerun()
 
+# --------- Save all escalations to Excel for download ---------
 def save_complaints_excel():
-    """
-    Save the entire escalation data as Excel for download.
-    """
     df = load_escalations_df()
     filename = "complaints_data.xlsx"
     df.to_excel(filename, index=False)
     return filename
 
+# --------- Check SLA breaches and send alerts ---------
 def check_sla_and_alert():
-    """
-    Check for SLA breaches: open high priority escalations older than 10 minutes.
-    Sends MS Teams alerts.
-    """
+    # SLA breach if high priority & Open status for >10 minutes (for testing)
     df = load_escalations_df()
-    now = datetime.datetime.now(datetime.timezone.utc)
-    breached = df[(df['priority'] == "High") & (df['status'] == "Open")]
+    now = datetime.datetime.now(datetime.timezone.utc)  # timezone aware now
+    breached = df[
+        (df['priority'] == "High") &
+        (df['status'] == "Open")
+    ]
 
     alerts_sent = 0
     for _, row in breached.iterrows():
@@ -413,207 +339,195 @@ def check_sla_and_alert():
         except Exception:
             continue
         elapsed = now - last_update
-        if elapsed.total_seconds() > 10 * 60:  # 10 minutes for testing
+        if elapsed.total_seconds() > 10 * 60:  # 10 minutes SLA for testing
             send_ms_teams_alert(
                 f"⚠️ SLA breach detected:\nID: {row['escalation_id']}\nCustomer: {row['customer']}\nOpen for: {elapsed.seconds // 60} minutes\nIssue: {row['issue'][:200]}..."
             )
             alerts_sent += 1
     return alerts_sent
 
+# --------- Train or load predictive escalation model ---------
+def train_escalation_prediction_model():
+    global model, vectorizer
+    try:
+        df = load_escalations_df()
+        # Use only rows with 'priority' and 'issue'
+        df = df[df['issue'].notnull() & df['priority'].notnull()]
+        if len(df) < 10:
+            st.warning("Not enough data to train prediction model.")
+            return False
+
+        vectorizer = TfidfVectorizer(max_features=500)
+        X = vectorizer.fit_transform(df['issue'])
+        y = (df['priority'] == "High").astype(int)
+
+        model = LogisticRegression(max_iter=1000)
+        model.fit(X, y)
+
+        # Save model and vectorizer for future use (optional)
+        with open("escalation_model.pkl", "wb") as f:
+            pickle.dump((model, vectorizer), f)
+        st.success("Escalation prediction model trained.")
+        return True
+    except Exception as e:
+        st.error(f"Error training prediction model: {e}")
+        return False
+
+def predict_escalation(issue_text):
+    global model, vectorizer
+    if not model or not vectorizer:
+        return 0.0
+    X = vectorizer.transform([issue_text])
+    prob = model.predict_proba(X)[0][1]
+    return prob
+
+# --------- UI rendering: Kanban board in columns ---------
 def render_kanban():
-    """
-    Render the main Kanban board UI with status buckets as vertical columns,
-    each with color-coded header and counts, filter options, and buttons for email fetching and SLA check.
-    """
+    # CSS styles for Kanban columns and cards
     st.markdown(
         """
         <style>
-        /* Sticky header styling */
-        .sticky-header {
-            position: sticky;
-            top: 0;
-            background-color: white;
-            padding: 10px 20px 10px 0;
-            z-index: 100;
-            border-bottom: 1px solid #ddd;
-        }
-        /* Container for buttons in header */
-        .button-container > div {
-            display: inline-block;
-            margin-right: 15px;
-        }
-        /* Kanban columns container */
         .kanban-columns {
             display: flex;
             flex-direction: row;
-            justify-content: flex-start;
             gap: 15px;
             margin-top: 20px;
         }
-        /* Each Kanban column */
         .kanban-column {
             background-color: #f4f6f7;
             border-radius: 5px;
             padding: 10px;
-            width: 300px; /* Fixed width for compactness */
-            max-height: 600px;
+            width: 320px;
+            max-height: 650px;
             overflow-y: auto;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             display: flex;
             flex-direction: column;
         }
-        /* Header of each Kanban column */
         .kanban-header {
             font-weight: bold;
-            font-size: 1.2rem;
+            font-size: 1.3rem;
             padding: 8px 12px;
             border-radius: 5px;
             margin-bottom: 10px;
             color: white;
             user-select: none;
         }
-        /* Status-specific colors */
         .status-open {
-            background-color: #f1c40f; /* yellow */
+            background-color: #f1c40f;
         }
         .status-inprogress {
-            background-color: #2980b9; /* blue */
+            background-color: #2980b9;
         }
         .status-resolved {
-            background-color: #2ecc71; /* green */
+            background-color: #2ecc71;
         }
-        /* Card container inside column scroll */
         .kanban-cards {
             flex-grow: 1;
             overflow-y: auto;
-        }
-        /* Individual card spacing */
-        .kanban-card {
-            margin-bottom: 15px;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    # Sticky header with title and action buttons
-    st.markdown('<div class="sticky-header">', unsafe_allow_html=True)
-    st.title("EscalateAI - AI-Powered Escalation Management")
-
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        filter_option = st.radio("Filter Escalations:", ["All", "Escalated Only"], horizontal=True)
-    with col2:
-        if st.button("Fetch Latest Emails"):
-            new_emails = fetch_gmail_emails()
-            saved = save_emails_to_db(new_emails)
-            st.success(f"Fetched and saved {saved} new escalations.")
-    with col3:
-        if st.button("Check SLA Breaches"):
-            alerts = check_sla_and_alert()
-            st.info(f"Sent {alerts} SLA breach alerts if any.")
-    st.markdown("</div>", unsafe_allow_html=True)  # close sticky header div
-
-    df = load_escalations_df()
-    if filter_option == "Escalated Only":
-        df = df[df['escalation_flag'] == 1]
-
-    if df.empty:
-        st.info("No escalations to display.")
-        return
-
-    # Prepare counts per status
-    status_list = ["Open", "In Progress", "Resolved"]
-    status_counts = {status: df[df['status'] == status].shape[0] for status in status_list}
-
-    # Filter by status bucket selection (optional)
-    selected_status = st.radio(
-        label=f"Select Status Bucket (counts shown)",
-        options=["All"] + status_list,
-        index=0,
-        format_func=lambda x: f"{x} ({'All' if x == 'All' else status_counts.get(x, 0)})"
+    # Title and fetch / alert buttons sticky top
+    st.markdown(
+        """
+        <div style="position: sticky; top: 0; background: white; padding: 15px 0; z-index: 100; border-bottom: 1px solid #ccc;">
+            <h1 style="margin:0;">🚀 EscalateAI - AI-Powered Escalation Management</h1>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    # Filter dataframe based on selected status bucket
-    if selected_status != "All":
-        df = df[df['status'] == selected_status]
+    # Load escalations data
+    df = load_escalations_df()
+    if df.empty:
+        st.info("No escalations found.")
+        return
 
-    # Map status to CSS class for header color
-    status_class_map = {
-        "Open": "status-open",
-        "In Progress": "status-inprogress",
-        "Resolved": "status-resolved",
-    }
+    # Filters sidebar
+    st.sidebar.header("Filters")
+    status_filter = st.sidebar.multiselect("Filter by Status", options=["Open", "In Progress", "Resolved"], default=["Open", "In Progress", "Resolved"])
+    escalated_only = st.sidebar.checkbox("Show Escalated Only", value=False)
 
-    # Kanban columns container div
+    # Apply filters
+    filtered_df = df[df['status'].isin(status_filter)]
+    if escalated_only:
+        filtered_df = filtered_df[filtered_df['escalation_flag'] == 1]
+
+    # Status buckets and counts
+    status_counts = filtered_df['status'].value_counts().to_dict()
+
+    # Create columns container
     st.markdown('<div class="kanban-columns">', unsafe_allow_html=True)
 
-    # For each status, render a column with header and cards
-    for status in status_list:
+    for status in ["Open", "In Progress", "Resolved"]:
+        esc_list = filtered_df[filtered_df['status'] == status]
+        count = status_counts.get(status, 0)
+        status_class = status.lower().replace(" ", "")
+        # Column container
         st.markdown(f'<div class="kanban-column">', unsafe_allow_html=True)
-
-        # Status header with color and count
-        st.markdown(
-            f'<div class="kanban-header {status_class_map[status]}">{status} ({status_counts.get(status,0)})</div>',
-            unsafe_allow_html=True,
-        )
-
-        # Container for cards (scrollable)
+        st.markdown(f'<div class="kanban-header status-{status_class}">{status} ({count})</div>', unsafe_allow_html=True)
         st.markdown('<div class="kanban-cards">', unsafe_allow_html=True)
 
-        filtered = df[df['status'] == status]
-
-        if filtered.empty:
-            st.markdown("<i>No escalations</i>", unsafe_allow_html=True)
+        if esc_list.empty:
+            st.markdown("<i>No escalations.</i>", unsafe_allow_html=True)
         else:
-            # Display each escalation card with margin spacing
-            for _, row in filtered.iterrows():
-                with st.container():
-                    display_kanban_card(row)
-                    st.markdown('<div style="margin-bottom:15px;"></div>', unsafe_allow_html=True)
+            for _, row in esc_list.iterrows():
+                display_kanban_card(row)
 
-        st.markdown("</div>", unsafe_allow_html=True)  # close cards container
-        st.markdown("</div>", unsafe_allow_html=True)  # close kanban column
+        st.markdown("</div>", unsafe_allow_html=True)  # end cards
+        st.markdown("</div>", unsafe_allow_html=True)  # end column
 
-    st.markdown("</div>", unsafe_allow_html=True)  # close kanban-columns div
+    st.markdown("</div>", unsafe_allow_html=True)  # end columns container
 
+# --------- Main app ---------
 def main():
-    """
-    Main Streamlit app entry point.
-    Includes sidebar for manual entry and bulk upload.
-    Calls Kanban rendering.
-    """
-    st.sidebar.title("EscalateAI Controls")
+    st.set_page_config(page_title="EscalateAI", layout="wide")
 
-    # Manual Entry
-    st.sidebar.header("Manual Escalation Entry")
-    cust_input = st.sidebar.text_input("Customer Email or Name")
+    # Sidebar entries
+    st.sidebar.header("EscalateAI Controls")
+
+    # Fetch emails button
+    if st.sidebar.button("Fetch Latest Emails & Analyze"):
+        emails = fetch_gmail_emails()
+        new = save_emails_to_db(emails)
+        st.sidebar.success(f"Fetched and saved {new} new escalations.")
+
+    # Upload Excel
+    excel_file = st.sidebar.file_uploader("Upload Excel Complaints (xlsx)", type=["xlsx"])
+    if excel_file:
+        count = upload_excel_and_analyze(excel_file)
+        st.sidebar.success(f"Uploaded and saved {count} new escalations from Excel.")
+
+    # Manual entry form
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Manual Escalation Entry")
+    customer_input = st.sidebar.text_input("Customer (Email/Name)")
     issue_input = st.sidebar.text_area("Issue Description")
-    if st.sidebar.button("Add Escalation"):
-        if cust_input.strip() and issue_input.strip():
-            manual_entry_process(cust_input.strip(), issue_input.strip())
-        else:
-            st.sidebar.error("Please fill both customer and issue fields.")
+    if st.sidebar.button("Add Escalation Manually"):
+        manual_entry_process(customer_input, issue_input)
 
-    # Bulk Upload via Excel
-    st.sidebar.header("Upload Excel for Bulk Escalations")
-    uploaded_file = st.sidebar.file_uploader("Choose Excel file", type=["xlsx"])
-    if uploaded_file:
-        count = upload_excel_and_analyze(uploaded_file)
-        st.sidebar.success(f"Uploaded and saved {count} escalations from Excel.")
+    # Train predictive escalation model
+    if st.sidebar.button("Train Escalation Prediction Model"):
+        train_escalation_prediction_model()
 
     # Download current escalations as Excel
     if st.sidebar.button("Download Escalations Excel"):
-        filename = save_complaints_excel()
-        with open(filename, "rb") as f:
-            st.sidebar.download_button(
-                label="Download complaints_data.xlsx",
-                data=f,
-                file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        file = save_complaints_excel()
+        with open(file, "rb") as f:
+            btn = st.sidebar.download_button(label="Download Excel", data=f, file_name=file, mime="application/vnd.ms-excel")
 
+    # Check SLA and send alerts
+    alerts_sent = check_sla_and_alert()
+    if alerts_sent > 0:
+        st.sidebar.info(f"Sent {alerts_sent} SLA breach alerts.")
+
+    # Render Kanban board main view
     render_kanban()
+
 
 if __name__ == "__main__":
     main()
