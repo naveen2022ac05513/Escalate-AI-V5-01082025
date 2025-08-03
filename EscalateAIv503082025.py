@@ -143,13 +143,12 @@ def save_emails_to_db(emails):
         count += 1
         esc_id = f"SESICE-{count+250000}"
         sentiment, priority, escalation_flag = analyze_issue(e['issue'])
-        now = datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
+        now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
         cursor.execute("""
             INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner, status_update_date)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (esc_id, e['customer'], e['issue'][:500], e['date'], "Open", sentiment, priority, escalation_flag, "", "", now))
         new_entries += 1
-        # Alert MS Teams for new High priority escalation
         if escalation_flag == 1:
             send_ms_teams_alert(f"🚨 New HIGH priority escalation detected:\nID: {esc_id}\nCustomer: {e['customer']}\nIssue: {e['issue'][:200]}...")
     conn.commit()
@@ -193,14 +192,14 @@ def upload_excel_and_analyze(file):
         for idx, row in df.iterrows():
             customer = str(row[customer_col])
             issue = str(row[issue_col])
-            date = str(row[date_col]) if date_col and pd.notna(row[date_col]) else datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
+            date = str(row[date_col]) if date_col and pd.notna(row[date_col]) else datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
             cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (customer, issue[:500]))
             if cursor.fetchone():
                 continue
             existing_count += 1
             esc_id = f"SESICE-{existing_count+250000}"
             sentiment, priority, escalation_flag = analyze_issue(issue)
-            now = datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
+            now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
             cursor.execute("""
                 INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner, status_update_date)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -222,7 +221,7 @@ def manual_entry_process(customer, issue):
     count = cursor.fetchone()[0]
     esc_id = f"SESICE-{count+250001}"
     sentiment, priority, escalation_flag = analyze_issue(issue)
-    now = datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
     cursor.execute("""
         INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner, status_update_date)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -285,7 +284,7 @@ def display_kanban_card(row):
         )
 
         if st.button("Save Updates", key=f"save_{esc_id}"):
-            now = datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
+            now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
             cursor.execute("""
                 UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?
                 WHERE escalation_id=?
@@ -333,7 +332,7 @@ def save_complaints_excel():
 def check_sla_and_alert():
     # SLA breach if high priority & Open status for >48 hours
     df = load_escalations_df()
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(datetime.timezone.utc)  # timezone aware now
     breached = df[
         (df['priority'] == "High") &
         (df['status'] == "Open")
@@ -342,12 +341,13 @@ def check_sla_and_alert():
     for _, row in breached.iterrows():
         try:
             last_update = datetime.datetime.strptime(row['status_update_date'], "%a, %d %b %Y %H:%M:%S %z")
-        except:
+        except Exception:
             continue
         elapsed = now - last_update
         if elapsed.total_seconds() > 48 * 3600:
-            # Send alert for SLA breach
-            send_ms_teams_alert(f"⚠️ SLA breach detected:\nID: {row['escalation_id']}\nCustomer: {row['customer']}\nOpen for: {elapsed.days} days\nIssue: {row['issue'][:200]}...")
+            send_ms_teams_alert(
+                f"⚠️ SLA breach detected:\nID: {row['escalation_id']}\nCustomer: {row['customer']}\nOpen for: {elapsed.days} days\nIssue: {row['issue'][:200]}..."
+            )
 
 def main():
     st.sidebar.header("📥 Upload Complaints Excel File")
@@ -383,7 +383,6 @@ def main():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-    # Check SLA breaches and send alerts on app load
     check_sla_and_alert()
 
     render_kanban()
