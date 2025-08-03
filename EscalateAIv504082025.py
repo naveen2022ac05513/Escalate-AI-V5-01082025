@@ -229,6 +229,16 @@ with tabs[0]:
                 new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
                 new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
                 if st.button("💾 Save", key=f"save_{row['id']}"):
+                    def update_escalation(row_id, status, action_taken, owner):
+                        conn = sqlite3.connect(DB_PATH)
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE escalations
+                            SET status = ?, action_taken = ?, owner = ?
+                            WHERE id = ?
+                        """, (status, action_taken, owner, row_id))
+                        conn.commit()
+                        conn.close()
                     update_escalation(row['id'], new_status, new_action, new_owner)
                     st.success("Saved")
 
