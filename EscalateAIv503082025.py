@@ -265,14 +265,15 @@ def manual_entry_process(customer, issue):
     return True
 
 def display_kanban_card(row):
-    esc_id = row['escalation_id']
-    sentiment = row['sentiment']
-    priority = row['priority']
-    status = row['status']
-    created_at = row['created_at']
-    resolved_at = row['resolved_at']
-    added_by = row['added_by']
-    feedback = row['user_feedback']
+    # Use .get with default values to avoid KeyError
+    esc_id = row.get('escalation_id', 'N/A')
+    sentiment = row.get('sentiment', 'Unknown')
+    priority = row.get('priority', 'Unknown')
+    status = row.get('status', 'Unknown')
+    created_at = row.get('created_at', 'N/A')
+    resolved_at = row.get('resolved_at', 'N/A')
+    added_by = row.get('added_by', 'N/A')
+    feedback = row.get('user_feedback', "")
 
     sentiment_colors = {"Positive": "#27ae60", "Negative": "#e74c3c"}
     priority_colors = {"High": "#c0392b", "Low": "#27ae60"}
@@ -291,36 +292,48 @@ def display_kanban_card(row):
         {esc_id} &nbsp; 
         <span style='color:{sentiment_color}; font-weight:bold;'>● {sentiment}</span> / 
         <span style='color:{priority_colors.get(priority, '#000')}; font-weight:bold;'>■ {priority}</span> / 
-        <span style='color:{status_color}; font-weight:bold;'>{status}</span> / 
-        <small><i>Added by: {added_by}</i></small>
+        <span style='color:{status_color}; font-weight:bold;'>{status}</span>
     </div>
     """
 
     st.markdown(header_html, unsafe_allow_html=True)
 
     with st.expander("Details", expanded=False):
-        st.markdown(f"**Customer:** {row['customer']}")
-        st.markdown(f"**Issue:** {row['issue']}")
-        st.markdown(f"**Date:** {row['date']}")
+        st.markdown(f"**Customer:** {row.get('customer', 'N/A')}")
+        st.markdown(f"**Issue:** {row.get('issue', 'N/A')}")
+        st.markdown(f"**Date:** {row.get('date', 'N/A')}")
         st.markdown(f"**Created At:** {created_at}")
-        st.markdown(f"**Resolved At:** {resolved_at if resolved_at else 'N/A'}")
+        st.markdown(f"**Resolved At:** {resolved_at}")
+        st.markdown(f"**Added By:** {added_by}")
+        st.markdown(f"**User Feedback:** {feedback}")
 
         new_status = st.selectbox(
             "Update Status",
             ["Open", "In Progress", "Resolved"],
-            index=["Open", "In Progress", "Resolved"].index(status),
+            index=["Open", "In Progress", "Resolved"].index(status) if status in ["Open", "In Progress", "Resolved"] else 0,
             key=f"{esc_id}_status"
         )
         new_action_taken = st.text_area(
             "Action Taken",
-            value=row['action_taken'] or "",
+            value=row.get('action_taken', ""),
             key=f"{esc_id}_action"
         )
         new_action_owner = st.text_input(
             "Action Owner",
-            value=row['action_owner'] or "",
+            value=row.get('action_owner', ""),
             key=f"{esc_id}_owner"
         )
+
+        if st.button("Save Updates", key=f"save_{esc_id}"):
+            now = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+            cursor.execute("""
+                UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?
+                WHERE escalation_id=?
+            """, (new_status, new_action_taken, new_action_owner, now, esc_id))
+            conn.commit()
+            st.success("Updated successfully!")
+            st.experimental_rerun()
+
 
         # Feedback on escalation prediction correctness
         feedback_options = {
