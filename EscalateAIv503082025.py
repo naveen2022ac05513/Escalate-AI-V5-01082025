@@ -6,6 +6,7 @@ import datetime
 import pandas as pd
 import sqlite3
 import os
+import io
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import requests
 from dotenv import load_dotenv
@@ -13,21 +14,21 @@ from streamlit_autorefresh import st_autorefresh
 import smtplib
 from email.mime.text import MIMEText
 
-# Load environment variables
+# Load environment variables for email and Teams webhook credentials
 load_dotenv()
 EMAIL = os.getenv("EMAIL")
 PASSWORD = os.getenv("PASSWORD")
 IMAP_SERVER = "imap.gmail.com"
 MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")
-DB_PATH = "escalations.db"
 SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-SMTP_EMAIL = os.getenv("SMTP_EMAIL")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO")  # Email to notify on SLA breach
+DB_PATH = "escalations.db"
 
 # Sentiment analyzer init
 analyzer = SentimentIntensityAnalyzer()
 
+# Negative keywords grouped by type
 NEGATIVE_KEYWORDS = [
     "fail", "break", "crash", "defect", "fault", "degrade", "damage",
     "trip", "malfunction", "blank", "shutdown", "discharge",
@@ -53,7 +54,7 @@ CATEGORY_KEYWORDS = {
     "Business Risk": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate"]
 }
 
-# DB init
+# Initialize SQLite database
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
@@ -77,7 +78,7 @@ CREATE TABLE IF NOT EXISTS escalations (
 """)
 conn.commit()
 
-# Utils
+# ID generator
 def generate_id():
     cursor.execute("SELECT COUNT(*) FROM escalations")
     count = cursor.fetchone()[0] + 250001
@@ -117,7 +118,6 @@ def fetch_cases():
     df = pd.read_sql_query("SELECT * FROM escalations", conn)
     return df
 
-# Alerts
 def send_teams_alert(msg):
     if MS_TEAMS_WEBHOOK_URL:
         try:
@@ -127,47 +127,47 @@ def send_teams_alert(msg):
         except Exception as e:
             st.warning(f"Exception while sending Teams alert: {e}")
 
-def send_email_alert(subject, body, to_emails):
-    if not all([SMTP_SERVER, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD]):
-        st.warning("SMTP Email credentials not fully configured.")
+def send_email_alert(subject, body):
+    if not (SMTP_SERVER and EMAIL and PASSWORD and ALERT_EMAIL_TO):
+        st.warning("SMTP or alert email configuration missing.")
         return
     try:
         msg = MIMEText(body)
         msg['Subject'] = subject
-        msg['From'] = SMTP_EMAIL
-        msg['To'] = ", ".join(to_emails)
+        msg['From'] = EMAIL
+        msg['To'] = ALERT_EMAIL_TO
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_EMAIL, SMTP_PASSWORD)
-            server.sendmail(SMTP_EMAIL, to_emails, msg.as_string())
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(EMAIL, PASSWORD)
+        server.sendmail(EMAIL, [ALERT_EMAIL_TO], msg.as_string())
+        server.quit()
     except Exception as e:
-        st.warning(f"Error sending email alert: {e}")
+        st.warning(f"Failed to send email alert: {e}")
 
-# SLA breach detection & alert
-def detect_sla_breach(send_alerts=True):
+def detect_sla_breach(send_teams=True, send_email=True):
     now = datetime.datetime.now()
     df = fetch_cases()
-    breaches = []
+    breached_cases = []
     for idx, row in df.iterrows():
         try:
             created_dt = datetime.datetime.strptime(row["date"], "%Y-%m-%d %H:%M:%S")
         except Exception:
             continue
         if row.get("priority", "") == "High" and row.get("status", "") != "Resolved":
-            if (now - created_dt).total_seconds() > 600:
-                breaches.append(row)
-                if send_alerts:
-                    msg = f"SLA Breach: Escalation {row['escalation_id']} still open for over 10 minutes\nCustomer: {row['customer']}\nIssue: {row['issue']}"
-                    send_teams_alert(msg)
-                    alert_emails = [SMTP_EMAIL]  # update to your recipients
-                    send_email_alert("EscalateAI SLA Breach Alert", msg, alert_emails)
-    return breaches
+            if (now - created_dt).total_seconds() > 600:  # 10 mins
+                breached_cases.append(row)
 
-# Email parsing
+    for case in breached_cases:
+        msg = f"SLA Breach: Escalation {case['escalation_id']} from {case['customer']} still open for over 10 minutes.\nIssue: {case['issue']}"
+        if send_teams:
+            send_teams_alert(msg)
+        if send_email:
+            send_email_alert("SLA Breach Alert", msg)
+
 def parse_email():
     if not (EMAIL and PASSWORD):
-        st.warning("Email credentials not set in environment variables.")
+        st.warning("Email credentials not set.")
         return
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
@@ -191,7 +191,6 @@ def parse_email():
     except Exception as e:
         st.warning(f"Error parsing emails: {e}")
 
-# Excel processing
 def process_excel(uploaded_file):
     try:
         df = pd.read_excel(uploaded_file)
@@ -203,7 +202,6 @@ def process_excel(uploaded_file):
     except Exception as e:
         st.error(f"Error processing Excel file: {e}")
 
-# Core processing
 def process_case(customer, issue):
     if not customer or not issue:
         return
@@ -214,8 +212,8 @@ def process_case(customer, issue):
     urgency = detect_urgency(issue)
     category = detect_category(issue)
     flag = 1 if is_escalation(issue) else 0
-    predicted_risk = None
-    
+    predicted_risk = None  # Placeholder for ML risk prediction
+
     data = (eid, customer, issue, now_str, "Open", sentiment, priority, flag,
             urgency, category, "", "", now_str, predicted_risk)
     insert_to_db(data)
@@ -223,8 +221,8 @@ def process_case(customer, issue):
     if flag and priority == "High":
         send_teams_alert(f"New Escalation: {eid} from {customer}\nIssue: {issue}")
 
-# Dummy ML prediction stub
 def predict_risk(issue_text):
+    # Dummy prediction placeholder
     return 0.5
 
 def update_predictions():
@@ -235,13 +233,15 @@ def update_predictions():
             cursor.execute("UPDATE escalations SET predicted_risk=? WHERE escalation_id=?", (risk, row['escalation_id']))
     conn.commit()
 
-# Kanban card UI
 def display_kanban_card(row):
     sentiment = row.get('sentiment', 'N/A')
     urgency = row.get('urgency', 'N/A')
     category = row.get('category', 'N/A')
+    priority = row.get('priority', 'Normal')
+    escalation_flag = row.get('escalation_flag', 0)
 
-    st.markdown(f"**Sentiment:** {sentiment} | **Urgency:** {urgency} | **Category:** {category}")
+    highlight = "**🚩 ESCALATED**" if escalation_flag else ""
+    st.markdown(f"**Sentiment:** {sentiment} | **Urgency:** {urgency} | **Category:** {category} | **Priority:** {priority} {highlight}")
     st.write(row.get('issue', ''))
     action_taken = st.text_input("Action Taken", value=row.get('action_taken', ''), key=f"{row['escalation_id']}_action")
     action_owner = st.text_input("Action Owner", value=row.get('action_owner', ''), key=f"{row['escalation_id']}_owner")
@@ -260,14 +260,12 @@ def display_kanban_card(row):
         conn.commit()
         st.success("Escalation updated")
 
-# Kanban board UI
 def render_kanban(filter_escalated=False):
     df = fetch_cases()
     if filter_escalated:
         df = df[df['escalation_flag'] == 1]
     statuses = ["Open", "In Progress", "Resolved"]
     cols = st.columns(len(statuses))
-
     for i, status in enumerate(statuses):
         with cols[i]:
             count = df[df['status'] == status].shape[0]
@@ -279,12 +277,15 @@ def render_kanban(filter_escalated=False):
                 with st.expander(f"{row['escalation_id']} - {row['customer']}"):
                     display_kanban_card(row)
 
-# Concatenate all complaints dataframe for download
 def get_all_complaints_df():
     df = fetch_cases()
-    return df[['escalation_id', 'customer', 'issue', 'date', 'status', 'priority', 'category', 'predicted_risk']]
+    # Ensure these columns exist before returning
+    cols = ['escalation_id', 'customer', 'issue', 'date', 'status', 'priority', 'category', 'predicted_risk']
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    return df[cols]
 
-# Main app
 def main():
     st.title("🚨 EscalateAI – Customer Escalation Tracker")
 
@@ -313,26 +314,37 @@ def main():
             st.success("Predictions updated.")
 
         st.markdown("---")
-        if st.button("Trigger SLA Breach Alerts (Email & Teams)"):
-            breaches = detect_sla_breach(send_alerts=True)
-            st.success(f"SLA breach alerts sent for {len(breaches)} case(s).")
+        st.subheader("SLA Breach Alerts")
+
+        if st.button("Send MS Teams Alert"):
+            detect_sla_breach(send_teams=True, send_email=False)
+            st.success("MS Teams alert(s) sent for SLA breaches.")
+
+        if st.button("Send Email Alert"):
+            detect_sla_breach(send_teams=False, send_email=True)
+            st.success("Email alert(s) sent for SLA breaches.")
 
         st.markdown("---")
-        st.subheader("Download Consolidated Complaints")
+        st.subheader("Download Complaints")
+
         complaints_df = get_all_complaints_df()
+        towrite = io.BytesIO()
+        complaints_df.to_excel(towrite, index=False, engine='openpyxl')
+        towrite.seek(0)
+
         st.download_button(
             label="Download Complaints as Excel",
-            data=complaints_df.to_excel(index=False, engine='openpyxl'),
+            data=towrite,
             file_name='consolidated_complaints.xlsx',
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
 
         st.markdown("---")
-        filter_escalated = st.checkbox("Show only escalated cases")
+        filter_escalated = st.checkbox("Show Only Escalated Cases")
 
-    st_autorefresh(interval=60000, limit=None)
+    st_autorefresh(interval=60000, limit=None)  # Refresh every 60 seconds
 
-    detect_sla_breach(send_alerts=False)
+    detect_sla_breach(send_teams=False, send_email=False)  # silently detect SLA breaches (alerts via buttons)
 
     st.subheader("Kanban Board")
     render_kanban(filter_escalated=filter_escalated)
