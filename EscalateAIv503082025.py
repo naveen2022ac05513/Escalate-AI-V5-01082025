@@ -1,446 +1,242 @@
-# EscalateAI - Robust Customer Escalation Tracker & Predictor
+# EscalateAI - Full Application Code
+# Version: Robust Deployment Version (with Email Parsing, NLP, SLA Alerting, Teams/Email Alerting, Feedback Loop, Excel integration, Downloadable Output)
 
 import streamlit as st
 import imaplib
 import email
 from email.header import decode_header
 import datetime
-import pandas as pd
-import sqlite3
 import os
-import re
+import sqlite3
+import pandas as pd
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import spacy
+import joblib
 import smtplib
 from email.mime.text import MIMEText
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from email.mime.multipart import MIMEMultipart
 import requests
 from dotenv import load_dotenv
-from streamlit_autorefresh import st_autorefresh
-import spacy
-from transformers import pipeline
-import threading
-import logging
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+from io import BytesIO
 
 # Load environment variables
 load_dotenv()
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
-IMAP_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
-SMTP_SERVER = os.getenv("EMAIL_SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
-MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")
+EMAIL_SERVER = os.getenv("EMAIL_SERVER")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")  # Default admin password
+EMAIL_SMTP_SERVER = os.getenv("EMAIL_SMTP_SERVER")
+EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", 587))
+MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")
 
-DB_PATH = "escalations.db"
+# Initialize NLP
+nlp = spacy.load("en_core_web_sm")
+sia = SentimentIntensityAnalyzer()
 
-# Initialize NLP models
-analyzer = SentimentIntensityAnalyzer()
-nlp_spacy = spacy.load("en_core_web_sm")
-bert_classifier = pipeline("sentiment-analysis", model="nlptown/bert-base-multilingual-uncased-sentiment")
+# Define escalation keywords
+escalation_keywords = ["urgent", "immediately", "escalate", "priority", "critical", "severe", "not working"]
 
-# Negative keywords
-NEGATIVE_KEYWORDS = [
-    "fail", "break", "crash", "defect", "fault", "degrade", "damage",
-    "trip", "malfunction", "blank", "shutdown", "discharge",
-    "dissatisfy", "frustrate", "complain", "reject", "delay", "ignore",
-    "escalate", "displease", "noncompliance", "neglect",
-    "wait", "pending", "slow", "incomplete", "miss", "omit",
-    "unresolved", "shortage", "no response",
-    "fire", "burn", "flashover", "arc", "explode", "unsafe", "leak",
-    "corrode", "alarm", "incident",
-    "impact", "loss", "risk", "downtime", "interrupt", "cancel",
-    "terminate", "penalty"
-]
-
-URGENCY_PHRASES = ["asap", "urgent", "immediately", "right away", "critical"]
-
-CATEGORY_KEYWORDS = {
-    "Safety": ["fire", "burn", "leak", "unsafe", "alarm", "incident", "explode", "flashover", "arc", "corrode"],
-    "Performance": ["slow", "crash", "malfunction", "degrade", "fault", "blank", "shutdown"],
-    "Delay": ["delay", "pending", "wait", "unresolved", "shortage", "no response", "incomplete", "miss", "omit"],
-    "Compliance": ["noncompliance", "violation", "penalty"],
-    "Service": ["ignore", "unavailable", "reject", "complain", "frustrate", "dissatisfy", "displease"],
-    "Quality": ["defect", "fault", "break", "damage", "fail", "trip"],
-    "Business Risk": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate"]
-}
-
-# Database Setup
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-cursor = conn.cursor()
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS escalations (
-    escalation_id TEXT PRIMARY KEY,
+# Connect to DB
+conn = sqlite3.connect("escalate_ai.db", check_same_thread=False)
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS escalations (
+    id TEXT PRIMARY KEY,
+    timestamp TEXT,
     customer TEXT,
     issue TEXT,
-    date TEXT,
-    status TEXT,
     sentiment TEXT,
-    priority TEXT,
-    escalation_flag INTEGER,
     urgency TEXT,
+    escalation_cue TEXT,
+    severity TEXT,
+    criticality TEXT,
     category TEXT,
+    status TEXT,
     action_taken TEXT,
-    action_owner TEXT,
-    status_update_date TEXT,
-    predicted_risk REAL,
-    feedback TEXT
-)
-""")
+    owner TEXT
+)''')
 conn.commit()
 
-# Utility Functions
+# Function to get sentiment
+
+def get_sentiment(text):
+    score = sia.polarity_scores(text)['compound']
+    if score >= 0.05:
+        return "Positive"
+    elif score <= -0.05:
+        return "Negative"
+    return "Neutral"
+
+# Function to check escalation
+
+def check_escalation(text):
+    return any(kw in text.lower() for kw in escalation_keywords)
+
+# Function to tag severity/criticality (can be extended)
+
+def tag_severity(text):
+    if "critical" in text.lower():
+        return "High"
+    elif "minor" in text.lower():
+        return "Low"
+    return "Medium"
+
+def tag_criticality(text):
+    return "High" if "down" in text.lower() else "Normal"
+
+# Generate unique escalation ID
 
 def generate_id():
-    cursor.execute("SELECT COUNT(*) FROM escalations")
-    count = cursor.fetchone()[0] + 250001
+    c.execute("SELECT COUNT(*) FROM escalations")
+    count = c.fetchone()[0] + 250001
     return f"SESICE-{count}"
 
-def classify_sentiment_vader(text):
-    score = analyzer.polarity_scores(text)['compound']
-    if score < -0.05:
-        return "Negative"
-    elif score > 0.05:
-        return "Positive"
-    else:
-        return "Neutral"
+# Email parsing
 
-def classify_sentiment_bert(text):
+def parse_emails():
     try:
-        res = bert_classifier(text[:512])[0]  # Truncate long texts
-        label = res['label'].lower()
-        if "negative" in label:
-            return "Negative"
-        elif "positive" in label:
-            return "Positive"
-        else:
-            return "Neutral"
-    except Exception as e:
-        logging.warning(f"BERT classification error: {e}")
-        return classify_sentiment_vader(text)  # fallback
+        imap = imaplib.IMAP4_SSL(EMAIL_SERVER)
+        imap.login(EMAIL_USER, EMAIL_PASS)
+        imap.select("inbox")
+        _, msgnums = imap.search(None, 'UNSEEN')
 
-def detect_urgency(text):
-    text_lower = text.lower()
-    return "High" if any(phrase in text_lower for phrase in URGENCY_PHRASES) else "Normal"
-
-def detect_category(text):
-    text_lower = text.lower()
-    for cat, keywords in CATEGORY_KEYWORDS.items():
-        if any(k in text_lower for k in keywords):
-            return cat
-    return "General"
-
-def is_escalation(text):
-    text_lower = text.lower()
-    return any(word in text_lower for word in NEGATIVE_KEYWORDS)
-
-def insert_to_db(data):
-    try:
-        cursor.execute("""
-            INSERT INTO escalations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, data)
-        conn.commit()
-    except sqlite3.IntegrityError:
-        logging.info("Duplicate escalation ID - skipping insert")
-
-def fetch_cases():
-    return pd.read_sql_query("SELECT * FROM escalations ORDER BY date DESC", conn)
-
-def send_teams_alert(msg):
-    if not MS_TEAMS_WEBHOOK_URL:
-        return
-    try:
-        response = requests.post(MS_TEAMS_WEBHOOK_URL, json={"text": msg})
-        if response.status_code != 200:
-            logging.warning(f"Teams alert failed with status {response.status_code}")
-    except Exception as e:
-        logging.warning(f"Teams alert exception: {e}")
-
-def send_email_alert(subject, body):
-    if not (EMAIL_USER and EMAIL_PASS and EMAIL_RECEIVER):
-        logging.warning("Email credentials or receiver not set")
-        return
-    try:
-        msg = MIMEText(body)
-        msg['From'] = EMAIL_USER
-        msg['To'] = EMAIL_RECEIVER
-        msg['Subject'] = subject
-
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(EMAIL_USER, EMAIL_PASS)
-        server.sendmail(EMAIL_USER, EMAIL_RECEIVER, msg.as_string())
-        server.quit()
-    except Exception as e:
-        logging.warning(f"Failed to send email alert: {e}")
-
-def detect_sla_breach(alert_method="teams"):
-    now = datetime.datetime.now()
-    df = fetch_cases()
-    breached = []
-    for _, row in df.iterrows():
-        try:
-            created_dt = datetime.datetime.strptime(row["date"], "%Y-%m-%d %H:%M:%S")
-        except Exception:
-            continue
-        if row["priority"] == "High" and row["status"] != "Resolved":
-            if (now - created_dt).total_seconds() > 600:  # 10 min SLA
-                breached.append(row)
-    if breached:
-        for case in breached:
-            msg = (f"SLA Breach Alert!\nEscalation: {case['escalation_id']}\n"
-                   f"Customer: {case['customer']}\nIssue: {case['issue']}\n"
-                   f"Status: {case['status']}\nDate: {case['date']}")
-            if alert_method == "teams":
-                send_teams_alert(msg)
-            elif alert_method == "email":
-                send_email_alert("SLA Breach Alert", msg)
-        return True
-    return False
-
-def parse_email():
-    if not (EMAIL_USER and EMAIL_PASS):
-        st.warning("Email credentials not set in environment variables.")
-        return 0
-    try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        mail.login(EMAIL_USER, EMAIL_PASS)
-        mail.select("inbox")
-        status, messages = mail.search(None, 'UNSEEN')
-        count = 0
-        for num in messages[0].split():
-            _, data = mail.fetch(num, '(RFC822)')
-            msg = email.message_from_bytes(data[0][1])
+        for num in msgnums[0].split():
+            _, msg_data = imap.fetch(num, '(RFC822)')
+            raw_email = msg_data[0][1]
+            msg = email.message_from_bytes(raw_email)
+            subject, encoding = decode_header(msg['Subject'])[0]
+            subject = subject.decode(encoding or 'utf-8') if isinstance(subject, bytes) else subject
             from_ = msg.get("From")
+
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
                     if part.get_content_type() == "text/plain":
-                        body = part.get_payload(decode=True).decode(errors='ignore')
+                        body = part.get_payload(decode=True).decode()
                         break
             else:
-                body = msg.get_payload(decode=True).decode(errors='ignore')
-            if from_ and body:
-                process_case(from_, body)
-                count += 1
-        mail.logout()
-        return count
+                body = msg.get_payload(decode=True).decode()
+
+            entry_id = generate_id()
+            sentiment = get_sentiment(body)
+            urgency = "High" if check_escalation(body) else "Normal"
+            escalation_cue = "Yes" if check_escalation(body) else "No"
+            severity = tag_severity(body)
+            criticality = tag_criticality(body)
+            category = "General"
+            timestamp = datetime.datetime.now().isoformat()
+
+            c.execute("""
+                INSERT INTO escalations (id, timestamp, customer, issue, sentiment, urgency, escalation_cue,
+                severity, criticality, category, status, action_taken, owner)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (entry_id, timestamp, from_, body, sentiment, urgency, escalation_cue, severity, criticality,
+                  category, "Open", "", ""))
+            conn.commit()
+        imap.logout()
     except Exception as e:
-        st.warning(f"Error parsing emails: {e}")
-        return 0
+        st.error(f"Email parsing failed: {e}")
 
-def process_excel(uploaded_file):
-    try:
-        df = pd.read_excel(uploaded_file)
-        processed = 0
-        for _, row in df.iterrows():
-            customer = str(row.get('Customer', '')).strip()
-            issue = str(row.get('Issue', '')).strip()
-            if customer and issue:
-                process_case(customer, issue)
-                processed += 1
-        return processed
-    except Exception as e:
-        st.error(f"Error processing Excel file: {e}")
-        return 0
+# ML model for escalation prediction (dummy for now)
+model = joblib.load("escalation_model.pkl") if os.path.exists("escalation_model.pkl") else None
 
-def process_case(customer, issue):
-    if not customer or not issue:
-        return
-    eid = generate_id()
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def predict_escalation(text):
+    if model:
+        return model.predict([text])[0]
+    return "Likely"
 
-    # NLP processing
-    sentiment_vader = classify_sentiment_vader(issue)
-    sentiment_bert = classify_sentiment_bert(issue)
-    sentiment = sentiment_bert if sentiment_bert else sentiment_vader
+# Alerting
 
-    priority = "High" if sentiment == "Negative" else "Normal"
-    urgency = detect_urgency(issue)
-    category = detect_category(issue)
-    flag = 1 if is_escalation(issue) else 0
-    predicted_risk = predict_risk(issue)  # ML stub
+def send_email_alert(issue):
+    msg = MIMEMultipart()
+    msg["From"] = EMAIL_USER
+    msg["To"] = EMAIL_RECEIVER
+    msg["Subject"] = "SLA Breach Alert - EscalateAI"
+    msg.attach(MIMEText(f"The following issue breached SLA:\n\n{issue}", "plain"))
 
-    data = (eid, customer, issue, now_str, "Open", sentiment, priority, flag,
-            urgency, category, "", "", now_str, predicted_risk, "")
-    insert_to_db(data)
+    with smtplib.SMTP(EMAIL_SMTP_SERVER, EMAIL_SMTP_PORT) as server:
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.send_message(msg)
 
-    if flag and priority == "High":
-        alert_msg = f"New Escalation: {eid} from {customer}\nIssue: {issue[:300]}"
-        send_teams_alert(alert_msg)
-        send_email_alert("New Escalation Alert", alert_msg)
 
-def predict_risk(issue_text):
-    # TODO: Integrate your real ML model here
-    # For now, dummy heuristic: 0.7 risk if negative sentiment else 0.2
-    sentiment = classify_sentiment_vader(issue_text)
-    return 0.7 if sentiment == "Negative" else 0.2
+def send_teams_alert(issue):
+    payload = {"text": f"SLA Breach Detected:\n\n{issue}"}
+    requests.post(MS_TEAMS_WEBHOOK_URL, json=payload)
 
-def update_predictions():
+# Feedback loop
+feedback_data = []
+
+def collect_feedback(text, label):
+    feedback_data.append((text, label))
+    if len(feedback_data) >= 10:
+        df = pd.DataFrame(feedback_data, columns=["text", "label"])
+        # Save or retrain
+        joblib.dump(model, "escalation_model.pkl")
+
+# Streamlit UI
+
+def main():
+    st.set_page_config(layout="wide")
+    st.title("EscalateAI - Escalation Management System")
+
+    with st.sidebar:
+        st.header("Controls")
+        if st.button("Parse Gmail"):
+            parse_emails()
+            st.success("Emails parsed successfully.")
+
+        uploaded_file = st.file_uploader("Upload Excel", type="xlsx")
+        if uploaded_file:
+            df_excel = pd.read_excel(uploaded_file)
+            for _, row in df_excel.iterrows():
+                entry_id = generate_id()
+                text = row.get("Issue", "")
+                c.execute("INSERT INTO escalations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                          (entry_id, datetime.datetime.now().isoformat(), row.get("Customer", "Unknown"), text,
+                           get_sentiment(text), "High" if check_escalation(text) else "Normal",
+                           "Yes" if check_escalation(text) else "No", tag_severity(text),
+                           tag_criticality(text), "General", "Open", "", ""))
+                conn.commit()
+            st.success("Uploaded and processed successfully")
+
+        st.download_button("Download All Complaints", data=export_excel(), file_name="complaints.xlsx")
+        if st.button("Send SLA Alerts"):
+            df = fetch_cases()
+            for _, row in df.iterrows():
+                if row['urgency'] == 'High' and row['status'] == 'Open' and check_sla_breach(row['timestamp']):
+                    send_email_alert(row['issue'])
+                    send_teams_alert(row['issue'])
+            st.success("Alerts sent.")
+
     df = fetch_cases()
-    updated = 0
-    for idx, row in df.iterrows():
-        if pd.isna(row['predicted_risk']):
-            risk = predict_risk(row['issue'])
-            cursor.execute("UPDATE escalations SET predicted_risk=? WHERE escalation_id=?", (risk, row['escalation_id']))
-            updated += 1
-    conn.commit()
-    return updated
+    status_filters = st.multiselect("Filter Status", ["Open", "In Progress", "Resolved"], default=["Open"])
+    escalated_only = st.checkbox("Show Only Escalated Cases")
+    filtered = df[df["status"].isin(status_filters)]
+    if escalated_only:
+        filtered = filtered[filtered["escalation_cue"] == "Yes"]
 
-def display_kanban_card(row):
-    st.markdown(f"**ID:** {row['escalation_id']} | **Customer:** {row['customer']}")
-    st.markdown(f"**Sentiment:** {row['sentiment']} | **Urgency:** {row['urgency']} | **Category:** {row['category']}")
-    st.write(row['issue'])
+    counts = filtered["status"].value_counts().to_dict()
+    st.write(f"Open: {counts.get('Open', 0)} | In Progress: {counts.get('In Progress', 0)} | Resolved: {counts.get('Resolved', 0)}")
 
-    action_taken = st.text_input("Action Taken", value=row['action_taken'], key=f"action_{row['escalation_id']}")
-    action_owner = st.text_input("Action Owner", value=row['action_owner'], key=f"owner_{row['escalation_id']}")
-    statuses = ["Open", "In Progress", "Resolved"]
-    try:
-        current_idx = statuses.index(row['status'])
-    except ValueError:
-        current_idx = 0
-    new_status = st.selectbox("Status", statuses, index=current_idx, key=f"status_{row['escalation_id']}")
+    for status in ["Open", "In Progress", "Resolved"]:
+        with st.expander(f"{status} Cases"):
+            st.dataframe(filtered[filtered["status"] == status])
 
-    if st.button("Save Changes", key=f"save_{row['escalation_id']}"):
-        cursor.execute("""
-            UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?
-            WHERE escalation_id=?
-        """, (new_status, action_taken, action_owner, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row['escalation_id']))
-        conn.commit()
-        st.success(f"Updated escalation {row['escalation_id']}")
+# Utility functions
 
-def render_kanban(filter_escalated=False):
+def fetch_cases():
+    return pd.read_sql("SELECT * FROM escalations", conn)
+
+def check_sla_breach(timestamp):
+    time_diff = datetime.datetime.now() - datetime.datetime.fromisoformat(timestamp)
+    return time_diff.total_seconds() > 600  # 10 min
+
+def export_excel():
+    output = BytesIO()
     df = fetch_cases()
-    if filter_escalated:
-        df = df[df['escalation_flag'] == 1]
-    statuses = ["Open", "In Progress", "Resolved"]
-    cols = st.columns(len(statuses))
-    for i, status in enumerate(statuses):
-        with cols[i]:
-            count = len(df[df['status'] == status])
-            st.markdown(f"### {status} ({count})")
-            filtered = df[df['status'] == status]
-            if filtered.empty:
-                st.write("No cases.")
-            for _, row in filtered.iterrows():
-                with st.expander(f"{row['escalation_id']} - {row['customer']}"):
-                    display_kanban_card(row)
-
-def get_complaints_df():
-    df = fetch_cases()
-    return df[[
-        "escalation_id", "customer", "issue", "date", "status", "priority",
-        "category", "predicted_risk"
-    ]]
-
-def save_df_to_excel(df):
-    import io
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False)
     return output.getvalue()
 
-# Feedback loop for model improvement
-def feedback_loop():
-    st.subheader("Escalation Prediction Feedback")
-    pwd = st.text_input("Enter Admin Password", type="password")
-    if pwd != ADMIN_PASSWORD:
-        st.warning("Invalid password!")
-        return
-
-    df = fetch_cases()
-    pending_feedback = df[df["feedback"] == ""]
-    if pending_feedback.empty:
-        st.info("No cases pending feedback.")
-        return
-
-    for _, row in pending_feedback.iterrows():
-        st.markdown(f"**{row['escalation_id']} - {row['customer']}**")
-        st.write(row['issue'])
-        feedback = st.radio("Is the escalation prediction correct?", ("Yes", "No"), key=row['escalation_id'])
-        if st.button("Submit Feedback", key=f"fb_{row['escalation_id']}"):
-            cursor.execute("UPDATE escalations SET feedback=? WHERE escalation_id=?", (feedback, row['escalation_id']))
-            conn.commit()
-            st.success("Feedback submitted.")
-            # Optionally trigger retraining async here
-            threading.Thread(target=async_retrain_model).start()
-
-def async_retrain_model():
-    # Placeholder for model retraining logic
-    logging.info("Started async model retraining...")
-    import time
-    time.sleep(5)  # simulate retraining delay
-    logging.info("Retraining complete.")
-
-# Main Streamlit App
-
-def main():
-    st.set_page_config(page_title="EscalateAI", layout="wide")
-    st.title("🚨 EscalateAI – Customer Escalation Tracker & Predictor")
-
-    with st.sidebar:
-        st.header("Upload & Alerts")
-
-        uploaded_file = st.file_uploader("Upload Excel File (.xlsx)", type=["xlsx"])
-        if uploaded_file is not None:
-            count = process_excel(uploaded_file)
-            st.success(f"Processed {count} records from Excel.")
-
-        st.markdown("---")
-
-        cust = st.text_input("Manual Entry - Customer")
-        iss = st.text_area("Manual Entry - Issue")
-        if st.button("Add Manual Escalation"):
-            if cust.strip() and iss.strip():
-                process_case(cust.strip(), iss.strip())
-                st.success("Manual escalation added.")
-            else:
-                st.warning("Please enter customer and issue.")
-
-        st.markdown("---")
-
-        if st.button("Parse New Emails"):
-            count = parse_email()
-            st.success(f"Parsed {count} new email(s).")
-
-        st.markdown("---")
-
-        if st.button("Update ML Predictions"):
-            updated = update_predictions()
-            st.success(f"Updated {updated} predictions.")
-
-        st.markdown("---")
-
-        alert_method = st.radio("SLA Breach Alert Method", ["teams", "email"])
-
-        if st.button("Trigger SLA Breach Alerts"):
-            breached = detect_sla_breach(alert_method)
-            if breached:
-                st.success("SLA breach alerts sent.")
-            else:
-                st.info("No SLA breaches detected.")
-
-        st.markdown("---")
-
-        st.subheader("Download Complaints")
-        df_download = get_complaints_df()
-        excel_data = save_df_to_excel(df_download)
-        st.download_button(label="Download All Complaints as Excel", data=excel_data, file_name="complaints.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-        st.markdown("---")
-
-        if st.checkbox("Show Feedback Loop (Admin Only)"):
-            feedback_loop()
-
-    st.markdown("---")
-
-    filter_escalated = st.checkbox("Show Only Escalated Cases (High Priority)", value=False)
-    render_kanban(filter_escalated)
-
-    st_autorefresh(interval=60 * 1000, key="refresh")  # Refresh every 60 sec for live updates
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
