@@ -416,17 +416,37 @@ def retrain_model():
     return pipe
 
 def render_kanban():
-    st.header("Escalations Kanban Board")
-
     df = load_escalations_df()
-    statuses = ["Open", "In Progress", "Resolved"]
 
-    cols = st.columns(len(statuses))
-    for i, status in enumerate(statuses):
-        with cols[i]:
-            st.subheader(status)
-            for idx, row in df[df['status'] == status].iterrows():
-                display_kanban_card(row)
+    # Debug: show columns to Streamlit UI
+    st.write("Available columns in escalations table:", df.columns.tolist())
+
+    filter_choice = st.radio("Filter Escalations:", ["All", "Escalated Only"])
+
+    if filter_choice == "Escalated Only":
+        df = df[df['escalation_flag'] == 1]
+
+    open_count = len(df[df['status'] == 'Open'])
+    inprogress_count = len(df[df['status'] == 'In Progress'])
+    resolved_count = len(df[df['status'] == 'Resolved'])
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown(f"<h3 style='color:#f1c40f;'>🟡 Open ({open_count})</h3>", unsafe_allow_html=True)
+        for _, row in df[df['status'] == 'Open'].iterrows():
+            display_kanban_card(row)
+
+    with col2:
+        st.markdown(f"<h3 style='color:#2980b9;'>🔵 In Progress ({inprogress_count})</h3>", unsafe_allow_html=True)
+        for _, row in df[df['status'] == 'In Progress'].iterrows():
+            display_kanban_card(row)
+
+    with col3:
+        st.markdown(f"<h3 style='color:#2ecc71;'>🟢 Resolved ({resolved_count})</h3>", unsafe_allow_html=True)
+        for _, row in df[df['status'] == 'Resolved'].iterrows():
+            display_kanban_card(row)
+
 
 def main():
     st.title("EscalateAI - AI-Powered Escalation Management")
