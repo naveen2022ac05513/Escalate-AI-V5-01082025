@@ -1,8 +1,8 @@
-streamlit>=1.30.0
-pandas>=2.0.0
-vaderSentiment
-requests
-python-dotenv
-streamlit-autorefresh
+streamlit
+pandas
 openpyxl
+vaderSentiment
+python-dotenv
+requests
 email-validator
+streamlit-autorefresh
