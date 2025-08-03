@@ -1,8 +1,7 @@
 streamlit
-pandas
-openpyxl
 vaderSentiment
-python-dotenv
+pandas
 requests
-email-validator
-streamlit-autorefresh
+python-dotenv
+scikit-learn
+openpyxl
