@@ -6,10 +6,9 @@ import datetime
 import pandas as pd
 import sqlite3
 import os
-import requests
-import json
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from dotenv import load_dotenv
+import requests
 
 # Load environment variables from .env file
 load_dotenv()
@@ -37,11 +36,9 @@ NEGATIVE_KEYWORDS = [
     "terminate", "penalty"
 ]
 
-# Setup database connection
+# Setup database connection and create table
 conn = sqlite3.connect("escalations.db", check_same_thread=False)
 cursor = conn.cursor()
-
-# Create table if not exists, add status_update_date column if missing
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS escalations (
     escalation_id TEXT PRIMARY KEY,
@@ -59,42 +56,7 @@ CREATE TABLE IF NOT EXISTS escalations (
 """)
 conn.commit()
 
-# Check if status_update_date column exists, else add it (SQLite limitation workaround)
-cursor.execute("PRAGMA table_info(escalations)")
-columns = [col[1] for col in cursor.fetchall()]
-if 'status_update_date' not in columns:
-    cursor.execute("ALTER TABLE escalations ADD COLUMN status_update_date TEXT DEFAULT ''")
-    conn.commit()
-
 analyzer = SentimentIntensityAnalyzer()
-
-def send_ms_teams_alert(message: str):
-    if not MS_TEAMS_WEBHOOK_URL:
-        st.warning("MS Teams Webhook URL not configured.")
-        return False
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "text": message
-    }
-    try:
-        response = requests.post(MS_TEAMS_WEBHOOK_URL, headers=headers, data=json.dumps(payload))
-        if response.status_code == 200:
-            return True
-        else:
-            st.error(f"Failed to send MS Teams alert: {response.status_code} {response.text}")
-            return False
-    except Exception as e:
-        st.error(f"Exception sending MS Teams alert: {e}")
-        return False
-
-def analyze_issue(issue_text):
-    text_lower = issue_text.lower()
-    vs = analyzer.polarity_scores(issue_text)
-    sentiment = "Positive" if vs["compound"] >= 0 else "Negative"
-    neg_count = sum(1 for kw in NEGATIVE_KEYWORDS if kw in text_lower)
-    priority = "High" if sentiment == "Negative" and neg_count >= 2 else "Low"
-    escalation_flag = 1 if priority == "High" else 0
-    return sentiment, priority, escalation_flag
 
 def fetch_gmail_emails():
     if not EMAIL or not APP_PASSWORD:
@@ -161,31 +123,52 @@ def fetch_gmail_emails():
         st.error(f"Error fetching emails: {e}")
         return []
 
+def analyze_issue(issue_text):
+    text_lower = issue_text.lower()
+    vs = analyzer.polarity_scores(issue_text)
+    sentiment = "Positive" if vs["compound"] >= 0 else "Negative"
+    neg_count = sum(1 for kw in NEGATIVE_KEYWORDS if kw in text_lower)
+    priority = "High" if sentiment == "Negative" and neg_count >= 2 else "Low"
+    escalation_flag = 1 if priority == "High" else 0
+    return sentiment, priority, escalation_flag
+
 def save_emails_to_db(emails):
     cursor.execute("SELECT COUNT(*) FROM escalations")
     count = cursor.fetchone()[0]
     new_entries = 0
     for e in emails:
-        # Check duplication by customer + issue (truncate issue to 500 chars)
         cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (e['customer'], e['issue'][:500]))
         if cursor.fetchone():
             continue
         count += 1
         esc_id = f"SESICE-{count+250000}"
         sentiment, priority, escalation_flag = analyze_issue(e['issue'])
-        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+        now = datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
         cursor.execute("""
             INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner, status_update_date)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (esc_id, e['customer'], e['issue'][:500], e['date'], "Open", sentiment, priority, escalation_flag, "", "", now_str))
+        """, (esc_id, e['customer'], e['issue'][:500], e['date'], "Open", sentiment, priority, escalation_flag, "", "", now))
         new_entries += 1
-        # Alert for high priority
-        if priority == "High":
-            alert_msg = (f"🚨 New High Priority Escalation:\n"
-                         f"ID: {esc_id}\nCustomer: {e['customer']}\nIssue: {e['issue'][:100]}...\nDate: {e['date']}")
-            send_ms_teams_alert(alert_msg)
+        # Alert MS Teams for new High priority escalation
+        if escalation_flag == 1:
+            send_ms_teams_alert(f"🚨 New HIGH priority escalation detected:\nID: {esc_id}\nCustomer: {e['customer']}\nIssue: {e['issue'][:200]}...")
     conn.commit()
     return new_entries
+
+def send_ms_teams_alert(message):
+    if not MS_TEAMS_WEBHOOK_URL:
+        st.warning("MS Teams webhook URL not set; cannot send alerts.")
+        return
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "text": message
+    }
+    try:
+        response = requests.post(MS_TEAMS_WEBHOOK_URL, json=payload, headers=headers)
+        if response.status_code != 200:
+            st.error(f"MS Teams alert failed: {response.status_code} {response.text}")
+    except Exception as e:
+        st.error(f"Error sending MS Teams alert: {e}")
 
 def load_escalations_df():
     df = pd.read_sql_query("SELECT * FROM escalations", conn)
@@ -210,23 +193,21 @@ def upload_excel_and_analyze(file):
         for idx, row in df.iterrows():
             customer = str(row[customer_col])
             issue = str(row[issue_col])
-            date = str(row[date_col]) if date_col else datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+            date = str(row[date_col]) if date_col and pd.notna(row[date_col]) else datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
             cursor.execute("SELECT 1 FROM escalations WHERE customer=? AND issue=?", (customer, issue[:500]))
             if cursor.fetchone():
                 continue
             existing_count += 1
             esc_id = f"SESICE-{existing_count+250000}"
             sentiment, priority, escalation_flag = analyze_issue(issue)
-            now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+            now = datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
             cursor.execute("""
                 INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner, status_update_date)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (esc_id, customer, issue[:500], date, "Open", sentiment, priority, escalation_flag, "", "", now_str))
+            """, (esc_id, customer, issue[:500], date, "Open", sentiment, priority, escalation_flag, "", "", now))
             count += 1
-            if priority == "High":
-                alert_msg = (f"🚨 New High Priority Escalation:\n"
-                             f"ID: {esc_id}\nCustomer: {customer}\nIssue: {issue[:100]}...\nDate: {date}")
-                send_ms_teams_alert(alert_msg)
+            if escalation_flag == 1:
+                send_ms_teams_alert(f"🚨 New HIGH priority escalation detected:\nID: {esc_id}\nCustomer: {customer}\nIssue: {issue[:200]}...")
         conn.commit()
         return count
     except Exception as e:
@@ -241,17 +222,15 @@ def manual_entry_process(customer, issue):
     count = cursor.fetchone()[0]
     esc_id = f"SESICE-{count+250001}"
     sentiment, priority, escalation_flag = analyze_issue(issue)
-    now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+    now = datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
     cursor.execute("""
         INSERT INTO escalations (escalation_id, customer, issue, date, status, sentiment, priority, escalation_flag, action_taken, action_owner, status_update_date)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (esc_id, customer, issue[:500], now_str, "Open", sentiment, priority, escalation_flag, "", "", now_str))
+    """, (esc_id, customer, issue[:500], now, "Open", sentiment, priority, escalation_flag, "", "", now))
     conn.commit()
     st.sidebar.success(f"Added escalation {esc_id}")
-    if priority == "High":
-        alert_msg = (f"🚨 New High Priority Escalation:\n"
-                     f"ID: {esc_id}\nCustomer: {customer}\nIssue: {issue[:100]}...\nDate: {now_str}")
-        send_ms_teams_alert(alert_msg)
+    if escalation_flag == 1:
+        send_ms_teams_alert(f"🚨 New HIGH priority escalation detected:\nID: {esc_id}\nCustomer: {customer}\nIssue: {issue[:200]}...")
     return True
 
 def display_kanban_card(row):
@@ -287,7 +266,6 @@ def display_kanban_card(row):
         st.markdown(f"**Customer:** {row['customer']}")
         st.markdown(f"**Issue:** {row['issue']}")
         st.markdown(f"**Date:** {row['date']}")
-        st.markdown(f"**Last Status Update:** {row.get('status_update_date','')}")
 
         new_status = st.selectbox(
             "Update Status",
@@ -307,11 +285,11 @@ def display_kanban_card(row):
         )
 
         if st.button("Save Updates", key=f"save_{esc_id}"):
-            now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+            now = datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
             cursor.execute("""
                 UPDATE escalations SET status=?, action_taken=?, action_owner=?, status_update_date=?
                 WHERE escalation_id=?
-            """, (new_status, new_action_taken, new_action_owner, now_str, esc_id))
+            """, (new_status, new_action_taken, new_action_owner, now, esc_id))
             conn.commit()
             st.success("Updated successfully!")
             st.experimental_rerun()
@@ -346,36 +324,30 @@ def render_kanban():
         for _, row in df[df['status'] == 'Resolved'].iterrows():
             display_kanban_card(row)
 
-def save_complaints_csv():
+def save_complaints_excel():
     df = load_escalations_df()
     filename = "complaints_data.xlsx"
     df.to_excel(filename, index=False)
     return filename
 
 def check_sla_and_alert():
+    # SLA breach if high priority & Open status for >48 hours
     df = load_escalations_df()
-    now = datetime.datetime.now(datetime.timezone.utc)
-    sla_threshold_hours = 48
+    now = datetime.datetime.now()
+    breached = df[
+        (df['priority'] == "High") &
+        (df['status'] == "Open")
+    ]
 
-    for _, row in df.iterrows():
-        if row['status'] != "Resolved" and row['priority'] == "High":
-            try:
-                # Prefer status_update_date, fallback to original date
-                date_str = row.get('status_update_date') or row['date']
-                esc_date = datetime.datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %z")
-            except Exception:
-                continue
-
-            elapsed = (now - esc_date).total_seconds() / 3600
-            if elapsed > sla_threshold_hours:
-                message = (f"⚠️ SLA Breach Alert:\n"
-                           f"Escalation ID: {row['escalation_id']}\n"
-                           f"Customer: {row['customer']}\n"
-                           f"Issue: {row['issue'][:100]}...\n"
-                           f"Status: {row['status']}\n"
-                           f"Priority: {row['priority']}\n"
-                           f"Open for {elapsed:.1f} hours, exceeding SLA threshold of {sla_threshold_hours} hours.")
-                send_ms_teams_alert(message)
+    for _, row in breached.iterrows():
+        try:
+            last_update = datetime.datetime.strptime(row['status_update_date'], "%a, %d %b %Y %H:%M:%S %z")
+        except:
+            continue
+        elapsed = now - last_update
+        if elapsed.total_seconds() > 48 * 3600:
+            # Send alert for SLA breach
+            send_ms_teams_alert(f"⚠️ SLA breach detected:\nID: {row['escalation_id']}\nCustomer: {row['customer']}\nOpen for: {elapsed.days} days\nIssue: {row['issue'][:200]}...")
 
 def main():
     st.sidebar.header("📥 Upload Complaints Excel File")
@@ -402,7 +374,7 @@ def main():
             st.sidebar.info("No new emails or error.")
 
     if st.sidebar.button("Download Email Complaints Excel"):
-        filepath = save_complaints_csv()
+        filepath = save_complaints_excel()
         with open(filepath, "rb") as f:
             st.sidebar.download_button(
                 label="Download Complaints Data",
