@@ -49,7 +49,7 @@ NEGATIVE_KEYWORDS = {
 processed_email_uids = set()
 processed_email_uids_lock = threading.Lock()
 
-# --- ID generation with SESICE-25 + zero-padded 5 digits, sequential ---
+# --- ID generation with SESICE-25 + zero-padded 4 digits, sequential ---
 
 def get_next_escalation_id():
     conn = sqlite3.connect(DB_PATH)
@@ -72,7 +72,7 @@ def get_next_escalation_id():
     else:
         next_num = 1
 
-    return f"{ESCALATION_PREFIX}{str(next_num).zfill(5)}"
+    return f"{ESCALATION_PREFIX}{str(next_num).zfill(4)}"
 
 # --- DATABASE FUNCTIONS ---
 
