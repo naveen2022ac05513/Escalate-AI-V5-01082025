@@ -1,4 +1,4 @@
-# escalate_ai.py – Full EscalateAI with UI colors & requested features
+# escalate_ai.py – Full EscalateAI with sequential IDs and UI colors & requested features
 
 import streamlit as st
 import pandas as pd
@@ -49,7 +49,8 @@ NEGATIVE_KEYWORDS = {
 processed_email_uids = set()
 processed_email_uids_lock = threading.Lock()
 
-# --- ID generation with SESICE-25XXXXX format ---
+# --- ID generation with SESICE-25 + zero-padded 7 digits, sequential ---
+
 def get_next_escalation_id():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -58,13 +59,20 @@ def get_next_escalation_id():
         ORDER BY id DESC LIMIT 1
     ''')
     last = cursor.fetchone()
+    conn.close()
+
     if last:
-        last_num = int(last[0].replace(ESCALATION_PREFIX, ""))
+        last_id = last[0]
+        last_num_str = last_id.replace(ESCALATION_PREFIX, "")
+        try:
+            last_num = int(last_num_str)
+        except ValueError:
+            last_num = 0
         next_num = last_num + 1
     else:
         next_num = 1
-    conn.close()
-    return f"{ESCALATION_PREFIX}{str(next_num).zfill(5)}"
+
+    return f"{ESCALATION_PREFIX}{str(next_num).zfill(7)}"
 
 # --- DATABASE FUNCTIONS ---
 
@@ -293,7 +301,6 @@ if st.sidebar.button("📤 Download All Complaints (CSV)"):
     csv = df.to_csv(index=False)
     st.sidebar.download_button("Download CSV", csv, file_name="escalations.csv", mime="text/csv")
 
-# New Download escalated cases button
 if st.sidebar.button("📥 Download Escalated Cases (Excel)"):
     df = fetch_escalations()
     df_esc = df[df["escalated"] == "Yes"]
@@ -334,7 +341,6 @@ if st.sidebar.button("📣 Trigger SLA Alert"):
     else:
         st.sidebar.info("No SLA breaches detected.")
 
-# Display SLA breach banner in sidebar if any
 df_all = fetch_escalations()
 df_all['timestamp'] = pd.to_datetime(df_all['timestamp'], errors='coerce')
 breaches = df_all[(df_all['status'] != 'Resolved') & (df_all['priority'] == 'high') & 
@@ -345,8 +351,6 @@ if not breaches.empty:
         f"🚨 SLA breach detected for {len(breaches)} case(s)!"
         f"</div>", unsafe_allow_html=True
     )
-
-# --- Tabs for main UI ---
 
 tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
 
@@ -367,25 +371,18 @@ with tabs[0]:
             bucket = df[df["status"] == status]
             for i, row in bucket.iterrows():
                 flag = "🚩" if row['escalated'] == 'Yes' else ""
-                severity_color = SEVERITY_COLORS.get(row['severity'], "black")
-                urgency_color = URGENCY_COLORS.get(row['urgency'], "black")
-                
-                exp_label = f"{row['id']} - {row['customer']} {flag}"
-                with st.expander(exp_label, expanded=False):
+                header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
+                urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
+                expander_label = f"{row['id']} - {row['customer']} {flag}"
+                with st.expander(expander_label, expanded=False):
                     st.markdown(f"**Issue:** {row['issue']}")
-                    st.markdown(f"**Severity:** {colored_text(row['severity'].capitalize(), severity_color)}", unsafe_allow_html=True)
-                    st.markdown(f"**Criticality:** {row['criticality'].capitalize()}")
-                    st.markdown(f"**Category:** {row['category'].capitalize() if row['category'] else 'N/A'}")
-                    st.markdown(f"**Sentiment:** {row['sentiment'].capitalize()}")
-                    st.markdown(f"**Urgency:** {colored_text(row['urgency'].capitalize(), urgency_color)}", unsafe_allow_html=True)
-                    st.markdown(f"**Escalated:** {flag if flag else 'No'}")
-
-                    new_status = st.selectbox(
-                        "Update Status",
-                        ["Open", "In Progress", "Resolved"],
-                        index=["Open", "In Progress", "Resolved"].index(row["status"]),
-                        key=f"status_{row['id']}"
-                    )
+                    st.markdown(f"**Severity:** <span style='color:{header_color};font-weight:bold;'>{row['severity']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**Criticality:** {row['criticality']}")
+                    st.markdown(f"**Category:** {row['category']}")
+                    st.markdown(f"**Sentiment:** {row['sentiment']}")
+                    st.markdown(f"**Urgency:** <span style='color:{urgency_color};font-weight:bold;'>{row['urgency']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**Escalated:** {row['escalated']}")
+                    new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row["status"]), key=f"status_{row['id']}")
                     new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
                     new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
                     if st.button("💾 Save Changes", key=f"save_{row['id']}"):
@@ -410,16 +407,37 @@ with tabs[2]:
             st.success("Feedback saved.")
 
     if st.button("🔁 Retrain Model"):
-        st.info("Retraining model with feedback (stubbed)...")
+        st.info("Retraining model with feedback (stub)...")
         model = train_model()
         if model:
             st.success("Model retrained successfully.")
         else:
             st.warning("Not enough data to retrain model.")
 
-# --- BACKGROUND THREAD START ---
+# --- BACKGROUND THREAD ---
+
 if 'email_thread' not in st.session_state:
     email_thread = threading.Thread(target=email_polling_job, daemon=True)
     email_thread.start()
     st.session_state['email_thread'] = email_thread
+
+# --- DEV OPTIONS ---
+
+if st.sidebar.checkbox("🧪 View Raw Database"):
+    df = fetch_escalations()
+    st.sidebar.dataframe(df)
+
+if st.sidebar.button("🗑️ Reset Database (Dev Only)"):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DROP TABLE IF EXISTS escalations")
+    conn.commit()
+    conn.close()
+    st.sidebar.warning("Database reset. Please restart the app.")
+
+# --- NOTES ---
+# - Update .env with correct credentials
+# - Ensure app runs with Streamlit >= 1.10
+# - ML model is a stub; expand for production use
+# - Background email polling runs every 60 seconds
 
