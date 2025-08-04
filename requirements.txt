@@ -6,3 +6,5 @@ python-dotenv
 scikit-learn
 openpyxl
 xlsxwriter
+matplotlib
+seaborn
