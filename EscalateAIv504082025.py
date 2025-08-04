@@ -49,7 +49,7 @@ NEGATIVE_KEYWORDS = {
 processed_email_uids = set()
 processed_email_uids_lock = threading.Lock()
 
-# --- ID generation with SESICE-25 + zero-padded 4 digits, sequential ---
+# --- ID generation with SESICE-25 + zero-padded 5 digits, sequential ---
 
 def get_next_escalation_id():
     conn = sqlite3.connect(DB_PATH)
@@ -72,7 +72,7 @@ def get_next_escalation_id():
     else:
         next_num = 1
 
-    return f"{ESCALATION_PREFIX}{str(next_num).zfill(4)}"
+    return f"{ESCALATION_PREFIX}{str(next_num).zfill(5)}"
 
 # --- DATABASE FUNCTIONS ---
 
@@ -307,19 +307,16 @@ if st.sidebar.button("📥 Download Escalated Cases (Excel)"):
     if df_esc.empty:
         st.sidebar.info("No escalated cases to download.")
     else:
-        if not escalated_df.empty:
-            towrite = pd.ExcelWriter("escalated_cases.xlsx", engine='xlsxwriter')
-            escalated_df.to_excel(towrite, index=False, sheet_name='Escalated Cases')
-            towrite.close()
-            with open("escalated_cases.xlsx", "rb") as f:
-            st.download_button(
-            label="📥 Download Escalated Cases",
-            data=f,
-            file_name="Escalated_Cases.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.warning("No escalated cases to download.")
+        towrite = pd.ExcelWriter("escalated_cases.xlsx", engine='xlsxwriter')
+        df_esc.to_excel(towrite, index=False, sheet_name='EscalatedCases')
+        towrite.save()
+        with open("escalated_cases.xlsx", "rb") as file:
+            st.sidebar.download_button(
+                label="Download Escalated Cases Excel",
+                data=file,
+                file_name="escalated_cases.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 if st.sidebar.button("📩 Fetch Emails (IMAP)"):
     emails = parse_emails(EMAIL_SERVER, EMAIL_USER, EMAIL_PASS)
