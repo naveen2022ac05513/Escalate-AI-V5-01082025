@@ -1,4 +1,4 @@
-# escalate_ai.py – EscalateAI unified app with Gmail fetching, alerting, improved ML, and real-time polling
+# escalate_ai.py – EscalateAI unified app with env vars integration and sidebar controls
 
 import streamlit as st
 import pandas as pd
@@ -18,21 +18,22 @@ import smtplib
 import requests
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from dotenv import load_dotenv
 import threading
+from dotenv import load_dotenv
 
-# ---------------------------- LOAD ENV ----------------------------
+# ---------------------------- LOAD ENV VARS ----------------------------
 load_dotenv()
 
-IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.gmail.com")
+EMAIL_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 
-SMTP_EMAIL = os.getenv("SMTP_EMAIL")
-SMTP_PASS = os.getenv("SMTP_PASS")
-ALERT_RECIPIENT = os.getenv("ALERT_RECIPIENT")
-
-TEAMS_WEBHOOK = os.getenv("TEAMS_WEBHOOK")
+SMTP_SERVER = os.getenv("EMAIL_SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
+SMTP_EMAIL = EMAIL_USER
+SMTP_PASS = EMAIL_PASS
+ALERT_RECIPIENT = os.getenv("EMAIL_RECEIVER")
+TEAMS_WEBHOOK = os.getenv("MS_TEAMS_WEBHOOK_URL")
 
 # ---------------------------- GLOBALS ----------------------------
 DB_PATH = "escalations.db"
@@ -47,7 +48,7 @@ NEGATIVE_KEYWORDS = {
     "business": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"]
 }
 
-# For avoiding duplicates in email polling
+# Track processed email UIDs to avoid duplicates
 processed_email_uids = set()
 processed_email_uids_lock = threading.Lock()
 
@@ -124,78 +125,64 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 
 # ---------------------------- EMAIL PARSING ----------------------------
 
-def parse_emails(imap_server, email_user, email_pass):
-    """Parse unseen emails from IMAP and return list of dict with customer and issue."""
-    emails = []
+def parse_emails():
+    new_emails = []
     try:
-        conn = imaplib.IMAP4_SSL(imap_server)
-        conn.login(email_user, email_pass)
-        conn.select("inbox")
+        mail = imaplib.IMAP4_SSL(EMAIL_SERVER)
+        mail.login(EMAIL_USER, EMAIL_PASS)
+        mail.select("inbox")
 
-        _, messages = conn.search(None, "UNSEEN")
-        for num in messages[0].split():
-            # To avoid duplicates using UID, fetch UID
-            _, msg_uid_data = conn.fetch(num, '(UID)')
-            uid = None
-            if msg_uid_data and isinstance(msg_uid_data[0], tuple):
-                uid_match = re.search(rb'UID (\d+)', msg_uid_data[0][1])
-                if uid_match:
-                    uid = uid_match.group(1).decode()
+        _, data = mail.search(None, "UNSEEN")
+        email_uids = data[0].split()
 
-            if uid:
-                with processed_email_uids_lock:
-                    if uid in processed_email_uids:
-                        # Skip duplicate email
-                        continue
+        for uid in email_uids:
+            with processed_email_uids_lock:
+                if uid in processed_email_uids:
+                    continue  # skip already processed
 
-            _, msg_data = conn.fetch(num, "(RFC822)")
+            _, msg_data = mail.fetch(uid, "(RFC822)")
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
                     subject = decode_header(msg["Subject"])[0][0]
                     if isinstance(subject, bytes):
-                        subject = subject.decode(errors='ignore')
+                        subject = subject.decode(errors="ignore")
                     from_ = msg.get("From")
                     body = ""
                     if msg.is_multipart():
                         for part in msg.walk():
-                            if part.get_content_type() == "text/plain" and not part.get('Content-Disposition'):
-                                try:
-                                    body = part.get_payload(decode=True).decode(errors='ignore')
-                                except:
-                                    body = ""
+                            if part.get_content_type() == "text/plain":
+                                body = part.get_payload(decode=True).decode(errors="ignore")
                                 break
                     else:
-                        try:
-                            body = msg.get_payload(decode=True).decode(errors='ignore')
-                        except:
-                            body = ""
-                    combined_text = f"{subject} - {body[:500]}"
-                    emails.append({
-                        "customer": from_,
-                        "issue": combined_text
-                    })
-                    if uid:
-                        with processed_email_uids_lock:
-                            processed_email_uids.add(uid)
-        conn.logout()
+                        body = msg.get_payload(decode=True).decode(errors="ignore")
+                    issue_text = f"{subject} - {body[:500]}"
+                    new_emails.append({"customer": from_, "issue": issue_text})
+
+                    with processed_email_uids_lock:
+                        processed_email_uids.add(uid)
+
+        mail.logout()
     except Exception as e:
         st.error(f"Error fetching emails: {e}")
-    return emails
+    return new_emails
 
 # ---------------------------- NLP + ESCALATION TAGGING ----------------------------
 
 def analyze_issue(issue_text):
     sentiment_score = analyzer.polarity_scores(issue_text)
-    sentiment = "negative" if sentiment_score["compound"] < -0.05 else "positive" if sentiment_score["compound"] > 0.05 else "neutral"
+    compound = sentiment_score["compound"]
+    sentiment = "negative" if compound < -0.05 else "positive" if compound > 0.05 else "neutral"
 
-    urgency = "high" if any(word in issue_text.lower() for category in NEGATIVE_KEYWORDS.values() for word in category) else "normal"
+    # Check urgency by keywords presence
+    issue_lower = issue_text.lower()
+    urgency = "high" if any(word in issue_lower for category in NEGATIVE_KEYWORDS.values() for word in category) else "normal"
 
     category, matched_keywords = None, []
     for cat, keywords in NEGATIVE_KEYWORDS.items():
-        if any(k in issue_text.lower() for k in keywords):
+        if any(k in issue_lower for k in keywords):
             category = cat
-            matched_keywords = [k for k in keywords if k in issue_text.lower()]
+            matched_keywords = [k for k in keywords if k in issue_lower]
             break
 
     severity = "critical" if category in ["safety", "technical"] else "major" if category in ["support", "business"] else "minor"
@@ -209,31 +196,25 @@ def analyze_issue(issue_text):
 
 def train_model():
     df = fetch_escalations()
-    # Only train on escalated and non-escalated with known sentiment etc
-    df = df.dropna(subset=['sentiment', 'urgency', 'severity', 'criticality', 'escalated'])
     if df.shape[0] < 20:
-        return None  # Not enough data to train
+        return None
+    df = df.dropna(subset=['sentiment', 'urgency', 'severity', 'criticality', 'escalated'])
+    X = pd.get_dummies(df[['sentiment', 'urgency', 'severity', 'criticality']])
     y = df['escalated'].apply(lambda x: 1 if x == 'Yes' else 0)
     if y.nunique() < 2:
-        return None  # Not enough class diversity
-
-    X = pd.get_dummies(df[['sentiment', 'urgency', 'severity', 'criticality']])
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        return None
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
     model = RandomForestClassifier(random_state=42)
     model.fit(X_train, y_train)
     return model
 
 def predict_escalation(model, sentiment, urgency, severity, criticality):
-    if model is None:
-        # fallback rule based
-        return "Yes" if urgency == "high" or sentiment == "negative" else "No"
     X_pred = pd.DataFrame([{
         f"sentiment_{sentiment}": 1,
         f"urgency_{urgency}": 1,
         f"severity_{severity}": 1,
         f"criticality_{criticality}": 1
     }])
-    # Align columns with model training data
     X_pred = X_pred.reindex(columns=model.feature_names_in_, fill_value=0)
     pred = model.predict(X_pred)
     return "Yes" if pred[0] == 1 else "No"
@@ -243,70 +224,75 @@ def predict_escalation(model, sentiment, urgency, severity, criticality):
 def send_alert(message, via="email"):
     if via == "email":
         try:
-            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
                 server.starttls()
                 server.login(SMTP_EMAIL, SMTP_PASS)
-                server.sendmail(SMTP_EMAIL, ALERT_RECIPIENT, f"Subject: EscalateAI Alert\n\n{message}")
+                server.sendmail(SMTP_EMAIL, ALERT_RECIPIENT, message)
         except Exception as e:
             st.error(f"Email alert failed: {e}")
     elif via == "teams":
         try:
-            if not TEAMS_WEBHOOK:
-                st.warning("MS Teams webhook URL not set in .env")
-                return
-            requests.post(TEAMS_WEBHOOK, json={"text": message})
+            headers = {"Content-Type": "application/json"}
+            payload = {"text": message}
+            response = requests.post(TEAMS_WEBHOOK, json=payload, headers=headers)
+            if response.status_code != 200:
+                st.error(f"Teams alert failed with status {response.status_code}: {response.text}")
         except Exception as e:
             st.error(f"Teams alert failed: {e}")
 
+# ---------------------------- BACKGROUND EMAIL POLLING ----------------------------
+
+def email_polling_job():
+    while True:
+        try:
+            new_emails = parse_emails()
+            for mail in new_emails:
+                sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(mail["issue"])
+                insert_escalation(mail["customer"], mail["issue"], sentiment, urgency, severity, criticality, category, escalation_flag)
+        except Exception as e:
+            # Avoid crashing thread; log in Streamlit UI if possible
+            print(f"Email polling error: {e}")
+        time.sleep(60)  # Poll every 60 seconds
+
 # ---------------------------- STREAMLIT UI ----------------------------
 
-ensure_schema()  # Initialize DB
+ensure_schema()
 
 st.set_page_config(layout="wide")
 st.title("🚨 EscalateAI – Customer Escalation Management")
 
-# -------------------- SIDEBAR --------------------
-
 st.sidebar.header("⚙️ Controls")
 
-# Manual Excel upload
+# Manual fetch emails button
+if st.sidebar.button("📥 Fetch Emails Now"):
+    new_emails = parse_emails()
+    count_new = 0
+    for mail in new_emails:
+        sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(mail["issue"])
+        insert_escalation(mail["customer"], mail["issue"], sentiment, urgency, severity, criticality, category, escalation_flag)
+        count_new += 1
+    st.sidebar.success(f"Fetched and processed {count_new} new emails.")
+
+# Upload Excel for bulk upload
 uploaded_file = st.sidebar.file_uploader("📥 Upload Excel (Customer complaints)", type=["xlsx"])
 if uploaded_file:
     df_excel = pd.read_excel(uploaded_file)
-    model = train_model()  # get latest model to predict escalation flag
+    count_new = 0
     for _, row in df_excel.iterrows():
         issue = str(row.get("issue", ""))
         customer = str(row.get("customer", "Unknown"))
-        sentiment, urgency, severity, criticality, category, rule_flag = analyze_issue(issue)
-        ml_flag = predict_escalation(model, sentiment, urgency, severity, criticality)
-        escalation_flag = "Yes" if (rule_flag == "Yes" or ml_flag == "Yes") else "No"
+        sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
         insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
-    st.sidebar.success("Uploaded and processed Excel file successfully.")
+        count_new += 1
+    st.sidebar.success(f"Uploaded and processed {count_new} Excel entries successfully.")
 
-# Email fetching button
-if st.sidebar.button("📥 Fetch Emails"):
-    if not EMAIL_USER or not EMAIL_PASS:
-        st.sidebar.error("Email credentials not set in .env")
-    else:
-        with st.spinner("Fetching emails..."):
-            emails = parse_emails(IMAP_SERVER, EMAIL_USER, EMAIL_PASS)
-            model = train_model()
-            count_inserted = 0
-            for em in emails:
-                sentiment, urgency, severity, criticality, category, rule_flag = analyze_issue(em["issue"])
-                ml_flag = predict_escalation(model, sentiment, urgency, severity, criticality)
-                escalation_flag = "Yes" if (rule_flag == "Yes" or ml_flag == "Yes") else "No"
-                insert_escalation(em["customer"], em["issue"], sentiment, urgency, severity, criticality, category, escalation_flag)
-                count_inserted += 1
-            st.sidebar.success(f"Fetched and inserted {count_inserted} new emails.")
-
-# Download all escalations
+# Download CSV
 if st.sidebar.button("📤 Download All Complaints"):
     df = fetch_escalations()
     csv = df.to_csv(index=False)
     st.sidebar.download_button("Download CSV", csv, file_name="escalations.csv", mime="text/csv")
 
-# SLA Alerting button
+# Trigger SLA Alert button
 if st.sidebar.button("📣 Trigger SLA Alert"):
     df = fetch_escalations()
     df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
@@ -320,8 +306,10 @@ if st.sidebar.button("📣 Trigger SLA Alert"):
     else:
         st.sidebar.info("No SLA breaches detected.")
 
-# -------------------- MAIN TABS --------------------
+# Model training and prediction
+model = train_model()
 
+# Main Tabs
 tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
 
 with tabs[0]:
@@ -341,7 +329,11 @@ with tabs[0]:
             st.markdown(f"### {status}")
             bucket = df[df["status"] == status]
             for i, row in bucket.iterrows():
-                expander_label = f"{row['id']} - {row['customer']} {'🚩' if row['escalated']=='Yes' else ''}"
+                esc_pred = None
+                if model:
+                    esc_pred = predict_escalation(model, row['sentiment'], row['urgency'], row['severity'], row['criticality'])
+                pred_text = f" | ML Prediction: {esc_pred}" if esc_pred else ""
+                expander_label = f"{row['id']} - {row['customer']} {'🚩' if row['escalated']=='Yes' else ''}{pred_text}"
                 with st.expander(expander_label, expanded=False):
                     st.write(f"**Issue:** {row['issue']}")
                     st.write(f"**Severity:** {row['severity']}")
@@ -382,30 +374,14 @@ with tabs[2]:
         else:
             st.warning("Not enough data to retrain model.")
 
-# ---------------------------- BACKGROUND EMAIL POLLING ----------------------------
+# Background email polling thread start
+def start_email_polling():
+    thread = threading.Thread(target=email_polling_job, daemon=True)
+    thread.start()
 
-def email_polling_job():
-    """Background thread: poll email every 60s and insert new escalations"""
-    while True:
-        try:
-            if EMAIL_USER and EMAIL_PASS:
-                emails = parse_emails(IMAP_SERVER, EMAIL_USER, EMAIL_PASS)
-                if emails:
-                    model = train_model()
-                    for em in emails:
-                        sentiment, urgency, severity, criticality, category, rule_flag = analyze_issue(em["issue"])
-                        ml_flag = predict_escalation(model, sentiment, urgency, severity, criticality)
-                        escalation_flag = "Yes" if (rule_flag == "Yes" or ml_flag == "Yes") else "No"
-                        insert_escalation(em["customer"], em["issue"], sentiment, urgency, severity, criticality, category, escalation_flag)
-        except Exception as e:
-            # Log error quietly
-            print(f"[Email Polling Error] {e}")
-        time.sleep(60)
-
-# Start background polling thread as daemon
-if __name__ == "__main__":
-    if os.environ.get("RUN_EMAIL_PARSER", "1") == "1":
-        threading.Thread(target=email_polling_job, daemon=True).start()
+if st.session_state.get("email_polling_started", False) is False:
+    start_email_polling()
+    st.session_state["email_polling_started"] = True
 
 # ---------------------------- DEV OPTIONS ----------------------------
 
@@ -421,9 +397,4 @@ if st.sidebar.button("🗑️ Reset Database (Dev Only)"):
     conn.close()
     st.sidebar.warning("Database reset. Please restart the app.")
 
-# ---------------------------- NOTES ----------------------------
-# - Create a .env file with email credentials and webhook URL
-# - Use App Passwords or OAuth2 for Gmail SMTP/IMAP
-# - ML model training and prediction uses RandomForestClassifier on categorical NLP tags
-# - Email polling runs in a background thread every 60 seconds
-# - Ensure Streamlit version >= 1.10 for proper threading support
+# ---------------------------- END OF FILE ----------------------------
