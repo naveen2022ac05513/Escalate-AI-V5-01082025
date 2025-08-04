@@ -20,7 +20,8 @@ from sklearn.model_selection import train_test_split
 import threading
 from dotenv import load_dotenv
 
-load_dotenv()  # Load .env variables for credentials
+# Load environment variables from .env file (for credentials & config)
+load_dotenv()
 
 # --- Configuration from environment variables ---
 EMAIL_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
@@ -34,13 +35,17 @@ SMTP_PASS = EMAIL_PASS
 ALERT_RECIPIENT = os.getenv("EMAIL_RECEIVER")
 TEAMS_WEBHOOK = os.getenv("MS_TEAMS_WEBHOOK_URL")
 
+# SQLite database file path
 DB_PATH = "escalations.db"
+
+# Prefix for escalation IDs (fixed "SESICE-25" + 5-digit number)
 ESCALATION_PREFIX = "SESICE-25"
 
-# Initialize VADER sentiment analyzer
+# Initialize VADER sentiment analyzer (pretrained lexicon for sentiment scoring)
 analyzer = SentimentIntensityAnalyzer()
 
-# Expanded negative keywords by categories for NLP tagging
+# Expanded negative keywords list categorized by type of issue,
+# used for keyword matching to detect urgency and category of escalation
 NEGATIVE_KEYWORDS = {
     "technical": ["fail", "break", "crash", "defect", "fault", "degrade", "damage", "trip", "malfunction", "blank", "shutdown", "discharge"],
     "dissatisfaction": ["dissatisfy", "frustrate", "complain", "reject", "delay", "ignore", "escalate", "displease", "noncompliance", "neglect"],
@@ -49,8 +54,10 @@ NEGATIVE_KEYWORDS = {
     "business": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"]
 }
 
-processed_email_uids = set()  # For tracking processed emails in threading
-processed_email_uids_lock = threading.Lock()  # Thread safety for above
+# Used for tracking processed email UIDs in the background email polling thread
+processed_email_uids = set()
+processed_email_uids_lock = threading.Lock()  # Ensure thread-safe access to processed_email_uids
+
 
 # ---------------------
 # --- Helper Functions
@@ -59,7 +66,8 @@ processed_email_uids_lock = threading.Lock()  # Thread safety for above
 def get_next_escalation_id():
     """
     Generate a sequential escalation ID in the format SESICE-25XXXXX
-    by querying the database for the last inserted ID.
+    by querying the database for the last inserted ID and incrementing.
+    Ensures unique and sequential IDs for traceability.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -79,15 +87,17 @@ def get_next_escalation_id():
             last_num = 0
         next_num = last_num + 1
     else:
+        # If no previous IDs, start numbering at 1
         next_num = 1
 
-    # Zero-pad number to 5 digits
+    # Zero-pad number to 5 digits (e.g., SESICE-2500001)
     return f"{ESCALATION_PREFIX}{str(next_num).zfill(5)}"
 
 
 def ensure_schema():
     """
     Ensure the SQLite database and escalations table exist.
+    Creates the table with all necessary columns for tracking escalations.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -119,7 +129,8 @@ def ensure_schema():
 
 def insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag):
     """
-    Insert a new escalation entry into the database.
+    Insert a new escalation record into the SQLite database.
+    Fields like status default to "Open", timestamps set to now.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -142,7 +153,8 @@ def insert_escalation(customer, issue, sentiment, urgency, severity, criticality
 
 def fetch_escalations():
     """
-    Fetch all escalation records from the database into a pandas DataFrame.
+    Retrieve all escalation records from the database as a pandas DataFrame.
+    Provides the basis for display in the UI and model training.
     """
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -157,7 +169,8 @@ def fetch_escalations():
 
 def update_escalation_status(esc_id, status, action_taken, action_owner, feedback=None):
     """
-    Update status, action taken, owner, and optional user feedback for an escalation.
+    Update an escalation’s status, action taken, owner, and optionally user feedback.
+    This is used when users update details on the Kanban board or provide feedback.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -176,8 +189,9 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 
 def parse_emails(imap_server, email_user, email_pass):
     """
-    Connect to IMAP server, fetch unseen emails, extract customer and issue info.
-    Returns a list of dicts with customer and issue.
+    Connect to the IMAP email server, fetch unseen emails from the inbox,
+    extract customer email and issue text (subject + body snippet).
+    Returns a list of dicts with 'customer' and 'issue' keys.
     """
     try:
         conn = imaplib.IMAP4_SSL(imap_server)
@@ -190,12 +204,14 @@ def parse_emails(imap_server, email_user, email_pass):
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
+                    # Decode email subject properly
                     subject = decode_header(msg["Subject"])[0][0]
                     if isinstance(subject, bytes):
                         subject = subject.decode(errors='ignore')
                     from_ = msg.get("From")
                     body = ""
                     if msg.is_multipart():
+                        # Iterate over parts to find plain text body
                         for part in msg.walk():
                             if part.get_content_type() == "text/plain":
                                 body = part.get_payload(decode=True).decode(errors='ignore')
@@ -204,7 +220,7 @@ def parse_emails(imap_server, email_user, email_pass):
                         body = msg.get_payload(decode=True).decode(errors='ignore')
                     emails.append({
                         "customer": from_,
-                        "issue": f"{subject} - {body[:200]}"
+                        "issue": f"{subject} - {body[:200]}"  # Truncate body snippet for brevity
                     })
         conn.logout()
         return emails
@@ -219,11 +235,13 @@ def parse_emails(imap_server, email_user, email_pass):
 
 def analyze_issue(issue_text):
     """
-    Analyze the issue text using VADER sentiment and keyword matching.
-    Return sentiment, urgency, severity, criticality, category, and escalation flag.
+    Analyze the issue text using VADER sentiment analysis and keyword matching.
+    Determine sentiment polarity, urgency, severity, criticality, category, and escalation flag.
     """
+    # Get sentiment scores from VADER
     sentiment_score = analyzer.polarity_scores(issue_text)
     compound = sentiment_score["compound"]
+    # Classify sentiment based on compound score thresholds
     if compound < -0.05:
         sentiment = "negative"
     elif compound > 0.05:
@@ -231,16 +249,17 @@ def analyze_issue(issue_text):
     else:
         sentiment = "neutral"
 
-    # Urgency high if any negative keyword found
+    # Determine urgency: high if any negative keyword detected
     urgency = "high" if any(word in issue_text.lower() for category in NEGATIVE_KEYWORDS.values() for word in category) else "normal"
 
+    # Assign category based on which negative keywords matched
     category = None
     for cat, keywords in NEGATIVE_KEYWORDS.items():
         if any(k in issue_text.lower() for k in keywords):
             category = cat
             break
 
-    # Assign severity based on category
+    # Assign severity: critical for safety or technical issues, major for support/business, else minor
     if category in ["safety", "technical"]:
         severity = "critical"
     elif category in ["support", "business"]:
@@ -248,9 +267,10 @@ def analyze_issue(issue_text):
     else:
         severity = "minor"
 
-    # Criticality high if sentiment negative + urgency high
+    # Criticality is high if sentiment is negative and urgency high, else medium
     criticality = "high" if sentiment == "negative" and urgency == "high" else "medium"
 
+    # Escalation flag set to "Yes" if urgency high or sentiment negative
     escalation_flag = "Yes" if urgency == "high" or sentiment == "negative" else "No"
 
     return sentiment, urgency, severity, criticality, category, escalation_flag
@@ -262,51 +282,54 @@ def analyze_issue(issue_text):
 
 def train_model():
     """
-    Train a RandomForestClassifier model to predict escalation based on historic data.
-    Requires at least 20 samples with variety in escalation labels.
-    Returns the trained model or None if insufficient data.
+    Train a RandomForestClassifier to predict whether an issue should escalate,
+    based on historical escalation data in the database.
+    Returns the trained model, or None if not enough data.
     """
     df = fetch_escalations()
     if df.shape[0] < 20:
+        # Not enough data for meaningful model training
         return None
 
-    # Drop rows missing critical columns
+    # Remove rows with missing critical info
     df = df.dropna(subset=['sentiment', 'urgency', 'severity', 'criticality', 'escalated'])
     if df.empty:
         return None
 
-    # Prepare features and label
+    # Prepare categorical features for modeling via one-hot encoding
     X = pd.get_dummies(df[['sentiment', 'urgency', 'severity', 'criticality']])
+    # Label: escalated = Yes -> 1, else 0
     y = df['escalated'].apply(lambda x: 1 if x == 'Yes' else 0)
 
     if y.nunique() < 2:
         # Not enough class variety to train
         return None
 
-    # Split data for training and testing (20% test)
+    # Split into train and test sets (20% test for evaluation if needed)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
+    # Initialize and train RandomForest classifier
     model = RandomForestClassifier(random_state=42)
     model.fit(X_train, y_train)
 
-    # Optionally, could add metrics evaluation here
+    # (Optional) Evaluate model accuracy here if needed
 
     return model
 
 
 def predict_escalation(model, sentiment, urgency, severity, criticality):
     """
-    Use the trained model to predict if an issue should escalate.
-    Returns "Yes" or "No".
+    Use trained model to predict if a new issue should be escalated.
+    Returns "Yes" if predicted to escalate, otherwise "No".
     """
-    # Create dataframe with all zeros and only set the active categories to 1
+    # Build feature vector for prediction; initialize zeros for all expected columns
     X_pred = pd.DataFrame([{
         f"sentiment_{sentiment}": 1,
         f"urgency_{urgency}": 1,
         f"severity_{severity}": 1,
         f"criticality_{criticality}": 1
     }])
-    # Ensure all model features are present
+    # Reindex to model’s expected features, fill missing with 0
     X_pred = X_pred.reindex(columns=model.feature_names_in_, fill_value=0)
 
     pred = model.predict(X_pred)
@@ -319,18 +342,21 @@ def predict_escalation(model, sentiment, urgency, severity, criticality):
 
 def send_alert(message, via="email"):
     """
-    Send an alert message via email or MS Teams webhook.
+    Send an alert message either via email or Microsoft Teams webhook.
+    Handles errors and displays them in Streamlit UI.
     """
     if via == "email":
         try:
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
                 server.starttls()
                 server.login(SMTP_EMAIL, SMTP_PASS)
+                # Send plain text email to alert recipient
                 server.sendmail(SMTP_EMAIL, ALERT_RECIPIENT, message)
         except Exception as e:
             st.error(f"Email alert failed: {e}")
     elif via == "teams":
         try:
+            # Post JSON payload with alert text to MS Teams webhook URL
             requests.post(TEAMS_WEBHOOK, json={"text": message})
         except Exception as e:
             st.error(f"Teams alert failed: {e}")
@@ -342,8 +368,9 @@ def send_alert(message, via="email"):
 
 def email_polling_job():
     """
-    Background thread function to fetch new emails every 60 seconds,
-    parse and insert new escalations.
+    Background thread function that runs indefinitely,
+    fetching new unseen emails every 60 seconds,
+    analyzing them, and inserting new escalations into the DB.
     """
     while True:
         emails = parse_emails(EMAIL_SERVER, EMAIL_USER, EMAIL_PASS)
@@ -360,6 +387,7 @@ def email_polling_job():
 # --- UI COLORS -----
 # -------------------
 
+# Define colors for UI display consistency
 STATUS_COLORS = {
     "Open": "#FFA500",        # Orange
     "In Progress": "#1E90FF", # Dodger Blue
@@ -379,7 +407,7 @@ URGENCY_COLORS = {
 
 def colored_text(text, color):
     """
-    Utility to format colored HTML text (used in markdown with unsafe_allow_html).
+    Utility function to generate HTML colored text for Streamlit markdown with unsafe HTML enabled.
     """
     return f'<span style="color:{color};font-weight:bold;">{text}</span>'
 
@@ -388,16 +416,16 @@ def colored_text(text, color):
 # --- STREAMLIT UI ---
 # -------------------
 
-# Ensure DB schema exists before starting
+# Ensure DB schema exists before starting the UI
 ensure_schema()
 
 st.set_page_config(layout="wide")
 st.title("🚨 EscalateAI – Customer Escalation Management System")
 
-# Sidebar controls
+# Sidebar controls for uploading, downloading, fetching emails, and alerts
 st.sidebar.header("⚙️ Controls")
 
-# Excel bulk upload for customer complaints
+# Excel bulk upload for customer complaints (expects columns 'customer' and 'issue')
 uploaded_file = st.sidebar.file_uploader("📥 Upload Excel (Customer complaints)", type=["xlsx"])
 if uploaded_file:
     df_excel = pd.read_excel(uploaded_file)
@@ -421,6 +449,7 @@ if st.sidebar.button("📥 Download Escalated Cases (Excel)"):
     if df_esc.empty:
         st.sidebar.info("No escalated cases to download.")
     else:
+        # Use context manager to save Excel file and serve for download
         with pd.ExcelWriter("escalated_cases.xlsx", engine='xlsxwriter') as writer:
             df_esc.to_excel(writer, index=False, sheet_name='EscalatedCases')
         with open("escalated_cases.xlsx", "rb") as file:
@@ -431,7 +460,7 @@ if st.sidebar.button("📥 Download Escalated Cases (Excel)"):
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-# Fetch emails manually from sidebar
+# Fetch emails manually from sidebar button
 if st.sidebar.button("📩 Fetch Emails (IMAP)"):
     emails = parse_emails(EMAIL_SERVER, EMAIL_USER, EMAIL_PASS)
     count = len(emails)
@@ -442,10 +471,11 @@ if st.sidebar.button("📩 Fetch Emails (IMAP)"):
         insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
     st.sidebar.success(f"Fetched and processed {count} new emails.")
 
-# Trigger SLA alert manually
+# Trigger SLA alert manually via sidebar button
 if st.sidebar.button("📣 Trigger SLA Alert"):
     df = fetch_escalations()
     df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    # Filter for open, high priority issues older than 10 minutes to detect SLA breaches
     breaches = df[(df['status'] != 'Resolved') & (df['priority'] == 'high') & 
                   ((datetime.datetime.now() - df['timestamp']) > datetime.timedelta(minutes=10))]
     if not breaches.empty:
@@ -456,122 +486,75 @@ if st.sidebar.button("📣 Trigger SLA Alert"):
     else:
         st.sidebar.info("No SLA breaches detected.")
 
-# Show SLA breach warning on sidebar if any
-df_all = fetch_escalations()
-df_all['timestamp'] = pd.to_datetime(df_all['timestamp'], errors='coerce')
-breaches = df_all[(df_all['status'] != 'Resolved') & (df_all['priority'] == 'high') & 
-                  ((datetime.datetime.now() - df_all['timestamp']) > datetime.timedelta(minutes=10))]
-if not breaches.empty:
-    st.sidebar.markdown(
-        f"<div style='background-color:#FF6347;color:white;padding:10px;border-radius:5px;margin-bottom:10px;text-align:center;'>"
-        f"🚨 SLA breach detected for {len(breaches)} case(s)!"
-        f"</div>", unsafe_allow_html=True
-    )
+# Manual entry form for new escalation
+st.subheader("➕ Add New Escalation Manually")
 
-# --- Main Tabs ---
-tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
+with st.form("manual_entry_form"):
+    customer = st.text_input("Customer Email or Name")
+    issue = st.text_area("Issue Description")
+    submitted = st.form_submit_button("Add Escalation")
 
-# --- All escalations tab with Kanban board ---
-with tabs[0]:
-    st.subheader("📊 Escalation Kanban Board")
-
-    df = fetch_escalations()
-    counts = df['status'].value_counts()
-    open_count = counts.get('Open', 0)
-    inprogress_count = counts.get('In Progress', 0)
-    resolved_count = counts.get('Resolved', 0)
-    st.markdown(f"**Open:** {open_count} | **In Progress:** {inprogress_count} | **Resolved:** {resolved_count}")
-
-    col1, col2, col3 = st.columns(3)
-    for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
-        with col:
-            # Column header with color
-            col.markdown(f"<h3 style='background-color:{STATUS_COLORS[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>", unsafe_allow_html=True)
-            bucket = df[df["status"] == status]
-            for i, row in bucket.iterrows():
-                flag = "🚩" if row['escalated'] == 'Yes' else ""
-                header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
-                urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
-                expander_label = f"{row['id']} - {row['customer']} {flag}"
-                with st.expander(expander_label, expanded=False):
-                    st.markdown(f"**Issue:** {row['issue']}")
-                    st.markdown(f"**Severity:** <span style='color:{header_color};font-weight:bold;'>{row['severity']}</span>", unsafe_allow_html=True)
-                    st.markdown(f"**Criticality:** {row['criticality']}")
-                    st.markdown(f"**Category:** {row['category']}")
-                    st.markdown(f"**Sentiment:** {row['sentiment']}")
-                    st.markdown(f"**Urgency:** <span style='color:{urgency_color};font-weight:bold;'>{row['urgency']}</span>", unsafe_allow_html=True)
-                    st.markdown(f"**Escalated:** {row['escalated']}")
-                    # Editable status, action taken, owner
-                    new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row["status"]), key=f"status_{row['id']}")
-                    new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
-                    new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
-                    if st.button("💾 Save Changes", key=f"save_{row['id']}"):
-                        update_escalation_status(row['id'], new_status, new_action, new_owner)
-                        st.success("Escalation updated.")
-
-# --- Escalated issues tab ---
-with tabs[1]:
-    st.subheader("🚩 Escalated Issues")
-    df = fetch_escalations()
-    df_esc = df[df["escalated"] == "Yes"]
-    st.dataframe(df_esc)
-
-# --- Feedback and Retraining tab ---
-with tabs[2]:
-    st.subheader("🔁 Feedback & Retraining")
-    df = fetch_escalations()
-    df_feedback = df[df["escalated"].notnull()]
-    feedback_map = {"Correct": 1, "Incorrect": 0}
-
-    # Feedback form per escalation
-    for i, row in df_feedback.iterrows():
-        feedback = st.selectbox(f"Is escalation for {row['id']} correct?", ["Correct", "Incorrect"], key=f"fb_{row['id']}")
-        if st.button(f"Submit Feedback for {row['id']}", key=f"fb_btn_{row['id']}"):
-            update_escalation_status(row['id'], row['status'], row.get('action_taken',''), row.get('owner',''), feedback_map[feedback])
-            st.success("Feedback saved.")
-
-    # Retrain model button
-    if st.button("🔁 Retrain Model"):
-        st.info("Retraining model with feedback (may take a few seconds)...")
-        model = train_model()
-        if model:
-            st.success("Model retrained successfully.")
+    if submitted:
+        if not customer or not issue:
+            st.error("Please provide both customer and issue details.")
         else:
-            st.warning("Not enough data to retrain model.")
+            sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
 
+            # Train or load model
+            model = train_model()
+            if model:
+                prediction = predict_escalation(model, sentiment, urgency, severity, criticality)
+                escalation_flag = prediction
 
-# ------------------------------
-# --- BACKGROUND EMAIL THREAD ---
-# ------------------------------
+            insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
+            st.success(f"Escalation added with urgency: {urgency}, severity: {severity}, escalation: {escalation_flag}")
 
-if 'email_thread' not in st.session_state:
-    email_thread = threading.Thread(target=email_polling_job, daemon=True)
-    email_thread.start()
-    st.session_state['email_thread'] = email_thread
+# Fetch all escalations for display
+df = fetch_escalations()
 
+# Show total count and counts by status
+st.markdown(f"### Total Escalations: {len(df)}")
+status_counts = df['status'].value_counts().to_dict()
+cols = st.columns(len(status_counts))
+for i, (status, count) in enumerate(status_counts.items()):
+    cols[i].markdown(f"**{status}:** {count}")
 
-# -----------------------
-# --- DEV OPTIONS -------
-# -----------------------
+# Filter by status
+status_filter = st.selectbox("Filter by Status", options=["All"] + list(STATUS_COLORS.keys()))
+if status_filter != "All":
+    df = df[df['status'] == status_filter]
 
-if st.sidebar.checkbox("🧪 View Raw Database"):
-    df = fetch_escalations()
-    st.sidebar.dataframe(df)
+# Display Kanban-like board grouped by status
+for status in STATUS_COLORS.keys():
+    if status_filter != "All" and status != status_filter:
+        continue
 
-if st.sidebar.button("🗑️ Reset Database (Dev Only)"):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DROP TABLE IF EXISTS escalations")
-    conn.commit()
-    conn.close()
-    st.sidebar.warning("Database reset. Please restart the app.")
+    st.markdown(f"### {colored_text(status, STATUS_COLORS[status])}", unsafe_allow_html=True)
 
-# -----------------------
-# --- NOTES -------------
-# -----------------------
-# - Update .env file with correct credentials:
-#   EMAIL_USER, EMAIL_PASS, EMAIL_SERVER, EMAIL_SMTP_SERVER, EMAIL_SMTP_PORT, EMAIL_RECEIVER, MS_TEAMS_WEBHOOK_URL
-# - Run app with Streamlit >=1.10 for best support
-# - ML model is RandomForest; can be replaced or enhanced as needed
-# - Background email polling fetches every 60 seconds automatically
-# - Excel export fixed with context manager, no deprecated save()
+    df_status = df[df['status'] == status]
+
+    for idx, row in df_status.iterrows():
+        with st.expander(f"{row['id']} | {row['customer']} | Severity: {row['severity']} | Urgency: {row['urgency']}"):
+            st.write("**Issue:**", row['issue'])
+            st.write("**Sentiment:**", row['sentiment'])
+            st.write("**Category:**", row['category'])
+            st.write("**Criticality:**", row['criticality'])
+            st.write("**Escalation Flag:**", row['escalation_flag'])
+
+            # Status update form
+            with st.form(f"update_{row['id']}"):
+                new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row['status']))
+                action_taken = st.text_area("Action Taken", value=row.get('action_taken', ''))
+                action_owner = st.text_input("Action Owner", value=row.get('action_owner', ''))
+                user_feedback = st.text_area("User Feedback", value=row.get('user_feedback', ''))
+                update_btn = st.form_submit_button("Update")
+
+                if update_btn:
+                    update_escalation_status(row['id'], new_status, action_taken, action_owner, user_feedback)
+                    st.success(f"Updated escalation {row['id']}")
+
+# Run background email polling thread (daemon so it closes on app exit)
+if not hasattr(st, "email_polling_thread"):
+    thread = threading.Thread(target=email_polling_job, daemon=True)
+    thread.start()
+    st.email_polling_thread = thread
