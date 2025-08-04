@@ -309,7 +309,7 @@ if st.sidebar.button("📥 Download Escalated Cases (Excel)"):
     else:
         towrite = pd.ExcelWriter("escalated_cases.xlsx", engine='xlsxwriter')
         df_esc.to_excel(towrite, index=False, sheet_name='EscalatedCases')
-        towrite.save()
+        towrite.close()
         with open("escalated_cases.xlsx", "rb") as file:
             st.sidebar.download_button(
                 label="Download Escalated Cases Excel",
