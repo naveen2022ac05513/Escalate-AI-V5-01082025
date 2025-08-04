@@ -307,16 +307,19 @@ if st.sidebar.button("📥 Download Escalated Cases (Excel)"):
     if df_esc.empty:
         st.sidebar.info("No escalated cases to download.")
     else:
-        towrite = pd.ExcelWriter("escalated_cases.xlsx", engine='xlsxwriter')
-        df_esc.to_excel(towrite, index=False, sheet_name='EscalatedCases')
-        towrite.save()
-        with open("escalated_cases.xlsx", "rb") as file:
-            st.sidebar.download_button(
-                label="Download Escalated Cases Excel",
-                data=file,
-                file_name="escalated_cases.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        if not escalated_df.empty:
+    towrite = pd.ExcelWriter("escalated_cases.xlsx", engine='xlsxwriter')
+    escalated_df.to_excel(towrite, index=False, sheet_name='Escalated Cases')
+    towrite.close()
+    with open("escalated_cases.xlsx", "rb") as f:
+        st.download_button(
+            label="📥 Download Escalated Cases",
+            data=f,
+            file_name="Escalated_Cases.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+else:
+    st.warning("No escalated cases to download.")
 
 if st.sidebar.button("📩 Fetch Emails (IMAP)"):
     emails = parse_emails(EMAIL_SERVER, EMAIL_USER, EMAIL_PASS)
