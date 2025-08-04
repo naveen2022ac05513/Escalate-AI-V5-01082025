@@ -308,11 +308,11 @@ if st.sidebar.button("📥 Download Escalated Cases (Excel)"):
         st.sidebar.info("No escalated cases to download.")
     else:
         if not escalated_df.empty:
-    towrite = pd.ExcelWriter("escalated_cases.xlsx", engine='xlsxwriter')
-    escalated_df.to_excel(towrite, index=False, sheet_name='Escalated Cases')
-    towrite.close()
-    with open("escalated_cases.xlsx", "rb") as f:
-        st.download_button(
+            towrite = pd.ExcelWriter("escalated_cases.xlsx", engine='xlsxwriter')
+            escalated_df.to_excel(towrite, index=False, sheet_name='Escalated Cases')
+            towrite.close()
+            with open("escalated_cases.xlsx", "rb") as f:
+            st.download_button(
             label="📥 Download Escalated Cases",
             data=f,
             file_name="Escalated_Cases.xlsx",
