@@ -660,6 +660,6 @@ def send_alerts(message: str):
 
 st.sidebar.header("Alerts")
 
-if st.sidebar.button("Send Test Alert"):
-    test_message = "🚨 This is a test alert from EscalateAI!"
+if st.sidebar.button("Send Alert"):
+    test_message = "🚨 This is a Alert from EscalateAI!"
     send_alerts(test_message)
