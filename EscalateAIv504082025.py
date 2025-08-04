@@ -615,3 +615,51 @@ if st.sidebar.button("🗑️ Reset Database (Dev Only)"):
 # - ML model is RandomForest; can be replaced or enhanced as needed
 # - Background email polling fetches every 60 seconds automatically
 # - Excel export fixed with context manager, no deprecated save()
+
+def send_ms_teams_alert(message: str):
+    if not MS_TEAMS_WEBHOOK_URL:
+        st.warning("MS Teams webhook URL not set; cannot send alerts.")
+        return
+    headers = {"Content-Type": "application/json"}
+    payload = {"text": message}
+    try:
+        response = requests.post(MS_TEAMS_WEBHOOK_URL, json=payload, headers=headers)
+        if response.status_code != 200:
+            st.error(f"MS Teams alert failed: {response.status_code} {response.text}")
+        else:
+            st.info("MS Teams alert sent successfully.")
+    except Exception as e:
+        st.error(f"Error sending MS Teams alert: {e}")
+
+def send_email_alert(subject: str, message: str):
+    if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
+        st.warning("Email sender/receiver credentials not set.")
+        return
+
+    msg = MIMEText(message)
+    msg['Subject'] = subject
+    msg['From'] = EMAIL_SENDER
+    msg['To'] = EMAIL_RECEIVER
+
+    try:
+        server = smtplib.SMTP(EMAIL_SMTP_SERVER, EMAIL_SMTP_PORT)
+        server.starttls()
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.sendmail(EMAIL_SENDER, [EMAIL_RECEIVER], msg.as_string())
+        server.quit()
+        st.info("Email alert sent successfully.")
+    except Exception as e:
+        st.error(f"Failed to send email alert: {e}")
+
+def send_alerts(message: str):
+    send_ms_teams_alert(message)
+    send_email_alert("EscalateAI Alert", message)
+
+
+# --- Sidebar button example to trigger alerts ---
+
+st.sidebar.header("Alerts")
+
+if st.sidebar.button("Send Test Alert"):
+    test_message = "🚨 This is a test alert from EscalateAI!"
+    send_alerts(test_message)
