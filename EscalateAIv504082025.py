@@ -615,51 +615,77 @@ if st.sidebar.button("🗑️ Reset Database (Dev Only)"):
 # - ML model is RandomForest; can be replaced or enhanced as needed
 # - Background email polling fetches every 60 seconds automatically
 # - Excel export fixed with context manager, no deprecated save()
-
-def send_ms_teams_alert(message: str):
+def send_ms_teams_alert(message):
     if not MS_TEAMS_WEBHOOK_URL:
-        st.warning("MS Teams webhook URL not set; cannot send alerts.")
+        st.warning("MS Teams webhook URL not configured.")
         return
-    headers = {"Content-Type": "application/json"}
-    payload = {"text": message}
     try:
+        headers = {"Content-Type": "application/json"}
+        payload = {"text": message}
         response = requests.post(MS_TEAMS_WEBHOOK_URL, json=payload, headers=headers)
         if response.status_code != 200:
             st.error(f"MS Teams alert failed: {response.status_code} {response.text}")
-        else:
-            st.info("MS Teams alert sent successfully.")
     except Exception as e:
         st.error(f"Error sending MS Teams alert: {e}")
 
-def send_email_alert(subject: str, message: str):
+def send_email_alert(subject, message):
     if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
         st.warning("Email sender/receiver credentials not set.")
         return
-
-    msg = MIMEText(message)
-    msg['Subject'] = subject
-    msg['From'] = EMAIL_SENDER
-    msg['To'] = EMAIL_RECEIVER
-
     try:
+        msg = MIMEText(message)
+        msg['Subject'] = subject
+        msg['From'] = EMAIL_SENDER
+        msg['To'] = EMAIL_RECEIVER
         server = smtplib.SMTP(EMAIL_SMTP_SERVER, EMAIL_SMTP_PORT)
         server.starttls()
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         server.sendmail(EMAIL_SENDER, [EMAIL_RECEIVER], msg.as_string())
         server.quit()
-        st.info("Email alert sent successfully.")
+        st.info("Email alert sent.")
     except Exception as e:
         st.error(f"Failed to send email alert: {e}")
 
-def send_alerts(message: str):
+def send_alerts(message):
     send_ms_teams_alert(message)
     send_email_alert("EscalateAI Alert", message)
 
+def check_sla_and_alert():
+    df = load_escalations_df()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    breached = df[(df['priority'] == "High") & (df['status'] == "Open")]
 
-# --- Sidebar button example to trigger alerts ---
+    alerts_sent = 0
+    for _, row in breached.iterrows():
+        try:
+            last_update = datetime.datetime.strptime(row['status_update_date'], "%a, %d %b %Y %H:%M:%S %z")
+        except Exception:
+            continue
+        elapsed = now - last_update
+        if elapsed.total_seconds() > 10 * 60:  # 10 minutes SLA breach
+            message = (
+                f"⚠️ SLA breach detected:\n"
+                f"ID: {row['escalation_id']}\n"
+                f"Customer: {row['customer']}\n"
+                f"Open for: {elapsed.seconds // 60} minutes\n"
+                f"Issue: {row['issue'][:200]}..."
+            )
+            send_alerts(message)
+            alerts_sent += 1
+    return alerts_sent
 
-st.sidebar.header("Alerts")
+def sidebar_alert_controls():
+    st.sidebar.header("Alerts")
 
-if st.sidebar.button("Send Alert"):
-    test_message = "🚨 This is a Alert from EscalateAI!"
-    send_alerts(test_message)
+    if st.sidebar.button("Send Test Alert"):
+        test_message = "🚨 This is a test alert from EscalateAI!"
+        send_alerts(test_message)
+        st.sidebar.success("Test alert sent!")
+
+    if st.sidebar.button("Send SLA Breach Alerts"):
+        with st.spinner("Checking SLA breaches and sending alerts..."):
+            alert_count = check_sla_and_alert()
+        if alert_count > 0:
+            st.sidebar.success(f"Sent {alert_count} SLA breach alerts successfully!")
+        else:
+            st.sidebar.info("No SLA breaches detected at this time.")
