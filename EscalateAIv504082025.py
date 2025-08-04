@@ -616,3 +616,55 @@ if st.sidebar.button("🗑️ Reset Database (Dev Only)"):
 # - Background email polling fetches every 60 seconds automatically
 # - Excel export fixed with context manager, no deprecated save()
 
+def send_alerts_for_all_escalated():
+    df = load_escalations_df()
+    if df.empty:
+        return 0
+    escalated_cases = df[(df['priority'] == "High") & (df['status'] == "Open")]
+
+    alerts_sent = 0
+    for _, row in escalated_cases.iterrows():
+        msg = (
+            f"🚨 Escalated Case Alert (Manual Override):\n"
+            f"ID: {row['escalation_id']}\n"
+            f"Customer: {row['customer']}\n"
+            f"Issue: {row['issue'][:200]}..."
+        )
+        send_alerts(msg)
+        alerts_sent += 1
+    return alerts_sent
+
+def sidebar_alert_controls():
+    st.sidebar.header("Alerts")
+
+    if st.sidebar.button("Send Test Alert"):
+        test_msg = "🚨 This is a test alert from EscalateAI!"
+        send_alerts(test_msg)
+        st.sidebar.success("Test alert sent!")
+
+    # Manual override button available to all users
+    if st.sidebar.button("Send Alerts for ALL Escalated Cases (Manual Override)"):
+        with st.spinner("Sending alerts for all escalated cases..."):
+            count = send_alerts_for_all_escalated()
+        if count > 0:
+            st.sidebar.success(f"Sent {count} alert(s) for escalated cases!")
+        else:
+            st.sidebar.info("No escalated cases found.")
+
+def main():
+    st.sidebar.title("EscalateAI Controls")
+
+    # Other sidebar controls here (manual entry, upload, fetch emails, etc.)
+
+    sidebar_alert_controls()
+
+    # Auto check SLA and alert every page load
+    alert_count = check_sla_and_alert()
+    if alert_count > 0:
+        st.sidebar.warning(f"{alert_count} SLA breaches detected and alerted.")
+
+    # Rest of your main app code (kanban board, data display, etc.)
+
+if __name__ == "__main__":
+    main()
+
