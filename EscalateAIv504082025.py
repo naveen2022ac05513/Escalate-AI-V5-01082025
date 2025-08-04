@@ -419,7 +419,20 @@ def colored_text(text, color):
 ensure_schema()
 
 st.set_page_config(layout="wide")
-st.title("🚨 EscalateAI – Customer Escalation Management System")
+#st.title("🚨 EscalateAI – Customer Escalation Management System")
+st.markdown(
+    """
+    <style>
+    /* Your CSS from above */
+    </style>
+    <header>
+        <div>
+            <h1 style="margin: 0; padding-left: 20px;">🚨 EscalateAI – Customer Escalation Management System</h1>
+        </div>
+    </header>
+    """,
+    unsafe_allow_html=True
+)
 
 # Sidebar controls
 st.sidebar.header("⚙️ Controls")
