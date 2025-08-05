@@ -653,7 +653,9 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                 st.markdown(f"**Escalated:** {row['escalated']}")
 
                 # Editable fields
-                new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row["status"]), key=f"status_{row['id']}")
+                new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"],
+                                          index=["Open", "In Progress", "Resolved"].index(row["status"]),
+                                          key=f"status_{row['id']}")
                 new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
                 new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
                 new_owner_email = st.text_input("Owner Email", row.get("owner_email", ""), key=f"email_{row['id']}")
@@ -662,6 +664,7 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                     update_escalation_status(row['id'], new_status, new_action, new_owner, new_owner_email)
                     st.success("Escalation updated.")
 
+                    # Notification message
                     notification_message = f"""
                     🔔 Hello {new_owner},
 
@@ -677,9 +680,9 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                     Please review the updates on the EscalateAI dashboard.
                     """
 
-                    # Trigger email and Teams notifications
+                    # Send notifications
                     send_alert(notification_message.strip(), via="email", recipient=new_owner_email)
-                    send_alert(notification_message.strip(), via="teams", recipient=new_owner_email)
+                    send_alert(notification_message.strip(), via="teams", recipient=new_owner_email) 
                     
 # --- Escalated issues tab ---
 with tabs[1]:
