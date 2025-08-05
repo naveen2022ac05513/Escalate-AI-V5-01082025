@@ -1,190 +1,268 @@
-# Imports
 import streamlit as st
 import pandas as pd
-import numpy as np
 import sqlite3
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+import threading
+from datetime import datetime
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import altair as alt
+import uuid
+import io
+import os
 
-# Config
-DB_PATH = "your_database_path.db"
-STATUS_COLORS = {"Open": "red", "In Progress": "orange", "Resolved": "green"}
+# Constants
+DB_PATH = "escalate_ai.db"
 
-# Ensure schema exists
-def ensure_schema():
-    conn = sqlite3.connect(DB_PATH)
+# Thread‐safe ID lock
+id_lock = threading.Lock()
+
+# Initialize VADER for sentiment analysis
+sentiment_analyzer = SentimentIntensityAnalyzer()
+
+
+def init_db():
+    """Create SQLite tables if they don't exist."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS escalations (
-            id TEXT PRIMARY KEY,
+            esc_id TEXT PRIMARY KEY,
             customer TEXT,
-            issue TEXT,
-            sentiment TEXT,
-            urgency TEXT,
+            subject TEXT,
+            description TEXT,
+            predicted_prob REAL,
+            predicted_label INTEGER,
+            sentiment REAL,
             severity TEXT,
-            criticality TEXT,
-            escalated TEXT,
-            status TEXT,
-            action_taken TEXT,
-            owner TEXT,
-            feedback_score INTEGER,
-            category TEXT
+            timestamp TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            esc_id TEXT,
+            action TEXT,
+            timestamp TEXT
         )
     """)
     conn.commit()
     conn.close()
 
-# Sample seeding (optional)
-def seed_data():
-    conn = sqlite3.connect(DB_PATH)
+
+def generate_escalation_id() -> str:
+    """Generate a unique escalation ID in a thread-safe way."""
+    with id_lock:
+        return uuid.uuid4().hex
+
+
+def log_audit(esc_id: str, action: str):
+    """Record an audit log entry."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
-    sample = ("ESC001", "Acme Corp", "Cannot log in", "negative", "high", "medium", "critical", "Yes", "Open", "", "", None, "Authentication")
-    c.execute("INSERT OR IGNORE INTO escalations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", sample)
+    c.execute(
+        "INSERT INTO audit_logs (esc_id, action, timestamp) VALUES (?, ?, ?)",
+        (esc_id, action, datetime.utcnow().isoformat())
+    )
     conn.commit()
     conn.close()
 
-# Fetch data
-def fetch_escalations():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT * FROM escalations", conn)
+
+def save_escalation(record: dict):
+    """Persist an escalation record to the database and log the action."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO escalations
+        (esc_id, customer, subject, description,
+         predicted_prob, predicted_label, sentiment, severity, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        record["esc_id"], record["customer"], record["subject"], record["description"],
+        record["predicted_prob"], record["predicted_label"],
+        record["sentiment"], record["severity"], record["timestamp"]
+    ))
+    conn.commit()
+    conn.close()
+    log_audit(record["esc_id"], "CREATED")
+
+
+def fetch_escalations() -> pd.DataFrame:
+    """Retrieve all escalation rows as a DataFrame."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    df = pd.read_sql("SELECT * FROM escalations", conn, parse_dates=["timestamp"])
     conn.close()
     return df
 
-def update_escalation_status(id, status, action_taken, owner, feedback_score=None):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""UPDATE escalations SET status=?, action_taken=?, owner=?, feedback_score=? WHERE id=?""",
-              (status, action_taken, owner, feedback_score, id))
-    conn.commit()
-    conn.close()
 
-def send_alert(message, via="email"):
-    st.info(f"Alert sent via {via}: {message}")
+def analyze_sentiment(text: str) -> float:
+    """Return the negative sentiment score for the text."""
+    vs = sentiment_analyzer.polarity_scores(text)
+    return vs["neg"]
 
-def send_whatsapp_message(phone, message):
-    st.info(f"WhatsApp message to {phone}: {message}")
 
-def train_model():
+def predict_severity(sentiment_score: float) -> (float, int, str):
+    """
+    Dummy escalation predictor based on negative sentiment:
+      - prob = sentiment_score
+      - label = 1 if prob > 0.2 else 0
+      - severity tiers: Low / Medium / High
+    """
+    prob = sentiment_score
+    label = 1 if prob > 0.2 else 0
+    if prob > 0.5:
+        sev = "High"
+    elif prob > 0.2:
+        sev = "Medium"
+    else:
+        sev = "Low"
+    return prob, label, sev
+
+
+def send_email(recipient: str, subject: str, body: str):
+    """Simulate sending an email notification."""
+    st.info(f"📧 Email sent to {recipient}: {subject}")
+
+
+def send_whatsapp_notification(message: str):
+    """Simulate sending a WhatsApp alert."""
+    st.info(f"📱 WhatsApp notification: {message}")
+
+
+def render_dashboard():
+    """Display metrics, charts, and data download on the dashboard."""
     df = fetch_escalations()
-    df = df.dropna(subset=['sentiment', 'urgency', 'severity', 'criticality', 'escalated'])
-    if df.shape[0] < 20 or df['escalated'].nunique() < 2:
-        st.warning("Not enough data to train model.")
-        return None
-    X = pd.get_dummies(df[['sentiment', 'urgency', 'severity', 'criticality']])
-    y = df['escalated'].apply(lambda x: 1 if x == 'Yes' else 0)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = RandomForestClassifier(random_state=42)
-    model.fit(X_train, y_train)
-    acc = accuracy_score(y_test, model.predict(X_test))
-    st.success(f"Model Accuracy: {acc:.2f}")
-    return model
+    if df.empty:
+        st.warning("No escalations to display yet.")
+        return
 
-def predict_escalation(model, sentiment, urgency, severity, criticality):
-    X_pred = pd.DataFrame([{
-        f"sentiment_{sentiment}": 1,
-        f"urgency_{urgency}": 1,
-        f"severity_{severity}": 1,
-        f"criticality_{criticality}": 1
-    }])
-    X_pred = X_pred.reindex(columns=model.feature_names_in_, fill_value=0)
-    pred = model.predict(X_pred)
-    return "Yes" if pred[0] == 1 else "No"
+    st.subheader("Key Metrics")
+    total = len(df)
+    avg_sentiment = df["sentiment"].mean().round(3)
+    high_count = (df["severity"] == "High").sum()
+    medium_count = (df["severity"] == "Medium").sum()
+    low_count = (df["severity"] == "Low").sum()
 
-def parse_feedback(feedback_text):
-    text = feedback_text.lower()
-    if "wrong" in text or "not needed" in text: return 0
-    elif "correct" in text or "appropriate" in text: return 1
-    else: return None
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Escalations", total)
+    col2.metric("Avg Negative Sentiment", avg_sentiment)
+    col3.metric("High Severity", high_count)
+    col4.metric("Medium Severity", medium_count)
 
-# Initialize schema & data
-ensure_schema()
-seed_data()
+    st.markdown("---")
+    st.subheader("Severity Distribution")
+    severity_bar = alt.Chart(df).mark_bar().encode(
+        x="severity",
+        y="count()",
+        color="severity"
+    )
+    st.altair_chart(severity_bar, use_container_width=True)
 
-# Streamlit UI
-st.set_page_config(layout="wide")
-st.title("🚨 EscalateAI 2.0 – Customer Escalation Platform")
+    st.subheader("Escalations Over Time")
+    df["date"] = df["timestamp"].dt.date
+    time_line = alt.Chart(df).mark_line(point=True).encode(
+        x="date",
+        y="count()",
+        color="severity"
+    )
+    st.altair_chart(time_line, use_container_width=True)
 
-# Sidebar
-st.sidebar.header("⚙️ Controls")
-if st.sidebar.button("📣 Send Manual Alert to MS Teams"):
-    send_alert("Manual alert triggered from dashboard", via="teams")
-if st.sidebar.button("📧 Send Manual Alert via Email"):
-    send_alert("Manual alert triggered from dashboard", via="email")
-
-# Main UI Tabs
-tabs = st.tabs(["📊 Dashboard", "🗃️ Kanban", "🚩 Escalated", "🔁 Feedback & Retrain", "🧪 Dev Panel"])
-
-# Tab 1: Dashboard
-with tabs[0]:
-    st.subheader("📊 Summary Dashboard")
-    df = fetch_escalations()
-    st.metric("Total Escalations", len(df))
-    st.metric("Resolved", df[df["status"] == "Resolved"].shape[0])
-    st.metric("Negative Sentiment", df[df["sentiment"] == "negative"].shape[0])
-    st.bar_chart(df["category"].value_counts())
-    st.bar_chart(df["urgency"].value_counts())
-    st.bar_chart(df["severity"].value_counts())
-
-# Tab 2: Kanban Board
-with tabs[1]:
-    st.subheader("🗃️ Escalation Kanban")
-    statuses = ["Open", "In Progress", "Resolved"]
-    cols = st.columns(len(statuses))
-    for i, status in enumerate(statuses):
-        with cols[i]:
-            st.markdown(f"<h4 style='color:{STATUS_COLORS[status]}'>{status}</h4>", unsafe_allow_html=True)
-            bucket = df[df["status"] == status]
-            for _, row in bucket.iterrows():
-                with st.expander(f"{row['id']} - {row['customer']}"):
-                    st.markdown(f"**Issue**: {row['issue']}")
-                    st.markdown(f"**Sentiment**: {row['sentiment']}")
-                    st.markdown(f"**Urgency**: {row['urgency']}")
-                    st.markdown(f"**Severity**: {row['severity']}")
-                    st.markdown(f"**Criticality**: {row['criticality']}")
-                    st.markdown(f"**Escalated**: {row['escalated']}")
-                    new_status = st.selectbox("Update Status", statuses, index=statuses.index(row["status"]), key=f"s_{row['id']}")
-                    new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"a_{row['id']}")
-                    new_owner = st.text_input("Owner", row.get("owner", ""), key=f"o_{row['id']}")
-                    if st.button("💾 Save", key=f"save_{row['id']}"):
-                        update_escalation_status(row['id'], new_status, new_action, new_owner)
-                        if new_status == "Resolved":
-                            send_whatsapp_message("whatsapp:+911234567890", f"Your escalation {row['id']} has been resolved.")
-                        st.success("Saved successfully.")
-
-# Tab 3: Escalated Cases
-with tabs[2]:
-    st.subheader("🚩 Escalated Issues")
-    st.dataframe(df[df["escalated"] == "Yes"])
-
-# Tab 4: Feedback & Retrain
-with tabs[3]:
-    st.subheader("🔁 Feedback & Retraining")
-    for _, row in df.iterrows():
-        feedback = st.text_input(f"Feedback on {row['id']}", key=f"fb_{row['id']}")
-        if st.button(f"Submit Feedback for {row['id']}", key=f"fb_btn_{row['id']}"):
-            score = parse_feedback(feedback)
-            if score is not None:
-                update_escalation_status(row['id'], row["status"], row.get("action_taken",""), row.get("owner",""), score)
-                st.success("Feedback recorded.")
-
-    if st.button("🔁 Retrain ML Model"):
-        model = train_model()
-        if model:
-            st.success("Model retrained.")
-        else:
-            st.warning("Model training failed.")
-
-# Tab 5: Dev Panel
-with tabs[4]:
-    st.subheader("🧪 Developer Utilities")
-    st.write("Raw Escalation Data")
+    st.markdown("---")
+    st.subheader("Escalations Data")
     st.dataframe(df)
-    if st.button("🧨 Reset Database (Dev Only)"):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("DROP TABLE IF EXISTS escalations")
-        c.execute("DROP TABLE IF EXISTS audit_log")
-        conn.commit()
-        conn.close()
-        st.warning("Database wiped. Refresh app to reinitialize.")
+
+    # Download
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="Download CSV",
+        data=csv,
+        file_name="escalations_export.csv",
+        mime="text/csv"
+    )
+
+
+def upload_csv():
+    """Handle CSV upload, record escalations, and notify stakeholders."""
+    uploaded = st.file_uploader("Upload escalation CSV", type="csv")
+    if not uploaded:
+        return
+
+    df = pd.read_csv(uploaded)
+    required = {"customer", "subject", "description"}
+    if not required.issubset(df.columns):
+        st.error(f"CSV must contain columns: {required}")
+        return
+
+    results = []
+    for _, row in df.iterrows():
+        text = f"{row.subject} {row.description}"
+        sentiment = analyze_sentiment(text)
+        prob, label, severity = predict_severity(sentiment)
+
+        record = {
+            "esc_id": generate_escalation_id(),
+            "customer": row.customer,
+            "subject": row.subject,
+            "description": row.description,
+            "predicted_prob": prob,
+            "predicted_label": label,
+            "sentiment": sentiment,
+            "severity": severity,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        save_escalation(record)
+        send_email(row.customer, f"[Escalation ID {record['esc_id']}]", record["subject"])
+        results.append(record)
+
+    st.success(f"Processed {len(results)} escalations.")
+    res_df = pd.DataFrame(results)
+    st.dataframe(res_df)
+
+    csv = res_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Processed Escalations",
+        data=csv, file_name="processed_escalations.csv", mime="text/csv"
+    )
+
+
+def parse_feedback():
+    """Parse feedback CSV to identify negative comments and log for retraining."""
+    uploaded = st.file_uploader("Upload feedback CSV", type="csv")
+    if not uploaded:
+        return
+
+    fb = pd.read_csv(uploaded)
+    if "feedback" not in fb.columns:
+        st.error("CSV must have a 'feedback' column.")
+        return
+
+    fb["neg_score"] = fb.feedback.apply(analyze_sentiment)
+    neg_fb = fb[fb.neg_score > 0.2]
+    count_neg = len(neg_fb)
+
+    # Stub for retraining pipeline
+    st.info(f"Identified {count_neg} negative feedback entries for retraining.")
+    log_audit("FEEDBACK", f"{count_neg} negative comments queued for model retraining")
+
+    if not neg_fb.empty:
+        st.dataframe(neg_fb[["feedback", "neg_score"]])
+
+
+def main():
+    st.set_page_config(page_title="EscalateAI 2.0", layout="wide")
+    st.title("🚨 EscalateAI – Smart Escalation Manager")
+
+    init_db()
+    menu = st.sidebar.radio("Navigation", ["Dashboard", "Upload", "Feedback Parser"])
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔔 Send Test WhatsApp Alert"):
+        send_whatsapp_notification("Test escalation resolved")
+
+    if menu == "Dashboard":
+        render_dashboard()
+    elif menu == "Upload":
+        upload_csv()
+    elif menu == "Feedback Parser":
+        parse_feedback()
+
+
+if __name__ == "__main__":
+    main()
