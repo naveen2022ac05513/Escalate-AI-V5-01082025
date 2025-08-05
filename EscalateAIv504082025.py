@@ -619,6 +619,50 @@ if status_check == "Resolved":
 else:
     st.sidebar.info("Available only for 'Resolved' cases.")
 
+import os
+import smtplib
+import requests
+from email.message import EmailMessage
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# ENV values
+EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_PASS = os.getenv("EMAIL_PASS")
+EMAIL_SMTP_SERVER = os.getenv("EMAIL_SMTP_SERVER")
+EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT"))
+MS_TEAMS_WEBHOOK_URL = os.getenv("MS_TEAMS_WEBHOOK_URL")
+
+def send_alert(message, via="email", recipient=None):
+    if via == "email":
+        try:
+            msg = EmailMessage()
+            msg['Subject'] = "🔔 Escalation Update Notification"
+            msg['From'] = EMAIL_USER
+            msg['To'] = recipient if recipient else EMAIL_USER  # fallback to sender
+            msg.set_content(message)
+
+            with smtplib.SMTP(EMAIL_SMTP_SERVER, EMAIL_SMTP_PORT) as server:
+                server.starttls()
+                server.login(EMAIL_USER, EMAIL_PASS)
+                server.send_message(msg)
+            print(f"✅ Email alert sent to {msg['To']}")
+        except Exception as e:
+            print(f"❌ Email sending failed: {e}")
+
+    elif via == "teams":
+        try:
+            payload = {"text": message}
+            response = requests.post(MS_TEAMS_WEBHOOK_URL, json=payload)
+            if response.status_code == 200:
+                print("✅ Teams alert sent successfully")
+            else:
+                print(f"❌ Teams alert failed with status {response.status_code}: {response.text}")
+        except Exception as e:
+            print(f"❌ Teams sending failed: {e}")
+            
 # --- Main Tabs ---
 tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
 
