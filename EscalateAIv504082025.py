@@ -691,6 +691,26 @@ def get_issues(db_conn):
     except Exception as e:
         st.error(f"Failed to fetch issues: {e}")
         return pd.DataFrame()  # return empty df on failure
+def dashboard_ui(db_conn):
+    # Example code for dashboard summary:
+    import streamlit as st
+    import pandas as pd
+    
+    df = pd.read_sql_query("SELECT * FROM escalations", db_conn)
+    if df.empty:
+        st.info("No escalations found.")
+        return
+    
+    st.subheader("Dashboard Summary")
+    total = len(df)
+    escalated = len(df[df['status'] == 'Escalated'])
+    resolved = len(df[df['status'] == 'Resolved'])
+    
+    st.markdown(f"**Total Issues:** {total}")
+    st.markdown(f"**Escalated:** {escalated}")
+    st.markdown(f"**Resolved:** {resolved}")
+    
+    # You can add charts, metrics, filters here
 
 if __name__ == "__main__":
     main()
