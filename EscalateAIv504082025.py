@@ -711,6 +711,94 @@ def dashboard_ui(db_conn):
     st.markdown(f"**Resolved:** {resolved}")
     
     # You can add charts, metrics, filters here
+import streamlit as st
+import pandas as pd
+import difflib
+import uuid
+from datetime import datetime
+from nlp_module import analyze_text  # reuse your VADER + keywords logic
+from db_utils import get_last_id, insert_issue  # modular insert/reuse
+
+def fuzzy_map_columns(input_columns, field_map):
+    mapped = {}
+    for key, aliases in field_map.items():
+        matches = []
+        for alias in aliases:
+            found = difflib.get_close_matches(alias.lower(), [col.lower().strip() for col in input_columns], n=1, cutoff=0.7)
+            if found:
+                for col in input_columns:
+                    if col.lower().strip() == found[0]:
+                        mapped[key] = col
+                        break
+                break
+    return mapped
+
+def excel_upload_ui(db_conn):
+    st.sidebar.subheader("📥 Upload Excel File")
+    uploaded_file = st.sidebar.file_uploader("Choose .xlsx file", type=["xlsx"])
+
+    if uploaded_file:
+        try:
+            df = pd.read_excel(uploaded_file)
+            st.success("File uploaded successfully.")
+            
+            # Mapping rules
+            internal_fields = {
+                'customer': ['customer', 'client', 'account'],
+                'issue_desc': ['issue', 'problem', 'complaint', 'description'],
+                'status': ['status', 'current status'],
+                'severity': ['severity', 'priority', 'criticalness'],
+                'criticality': ['criticality', 'risk'],
+                'category': ['category', 'activity', 'topic', 'business unit', 'bu'],
+                'action_taken': ['action', 'resolution', 'steps taken'],
+                'action_owner': ['owner', 'responsible', 'assigned to'],
+                'created_on': ['date', 'created', 'reported', 'issue reported date'],
+                'date_of_closure': ['closed', 'resolved', 'date of closure'],
+            }
+
+            # Smart column matching
+            col_map = fuzzy_map_columns(df.columns.tolist(), internal_fields)
+
+            if 'customer' not in col_map or 'issue_desc' not in col_map:
+                st.error("Mandatory columns like 'Customer' or 'Issue' not found.")
+                return
+
+            # Preview transformed records
+            st.subheader("Preview Parsed Records")
+            display_data = []
+            for _, row in df.iterrows():
+                issue_id = f"SESICE-{2500000 + get_last_id(db_conn) + 1}"
+                issue_text = row.get(col_map['issue_desc'], "")
+                sentiment, escalation_flag = analyze_text(issue_text)
+
+                parsed = {
+                    "issue_id": issue_id,
+                    "customer": row.get(col_map.get('customer'), "Unknown"),
+                    "issue_desc": issue_text,
+                    "status": row.get(col_map.get('status'), "Open"),
+                    "severity": row.get(col_map.get('severity'), "Medium"),
+                    "criticality": row.get(col_map.get('criticality'), "Medium"),
+                    "category": row.get(col_map.get('category'), "General"),
+                    "escalation_flag": escalation_flag,
+                    "sentiment": sentiment,
+                    "action_taken": row.get(col_map.get('action_taken'), ""),
+                    "action_owner": row.get(col_map.get('action_owner'), ""),
+                    "feedback": "",
+                    "created_on": row.get(col_map.get('created_on'), datetime.now()),
+                    "date_of_closure": row.get(col_map.get('date_of_closure'), None)
+                }
+                display_data.append(parsed)
+
+            preview_df = pd.DataFrame(display_data)
+            st.dataframe(preview_df)
+
+            if st.button("✅ Confirm and Save to Database"):
+                for entry in display_data:
+                    insert_issue(db_conn, entry)
+                st.success(f"{len(display_data)} records inserted successfully.")
+        except Exception as e:
+            st.error(f"Error processing file: {e}")
+
 
 if __name__ == "__main__":
     main()
