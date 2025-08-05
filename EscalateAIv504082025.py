@@ -75,8 +75,29 @@ CREATE TABLE IF NOT EXISTS feedback (
     timestamp TEXT
 )
 """)
+import sqlite3
 
-conn.commit()
+def init_db():
+    conn = sqlite3.connect('escalate_ai.db')
+    c = conn.cursor()
+    # Create table if not exists
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS escalations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            issue_id TEXT UNIQUE,
+            customer TEXT,
+            issue_desc TEXT,
+            status TEXT,
+            severity TEXT,
+            criticality TEXT,
+            category TEXT,
+            escalation_flag INTEGER,
+            feedback TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    return conn
 
 # --- Sentiment analyzer setup ---
 sia = SentimentIntensityAnalyzer()
