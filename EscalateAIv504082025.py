@@ -2,681 +2,656 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import sqlite3
-import os
-import re
-import time
 import datetime
-import base64
-import imaplib
-import email
-from email.header import decode_header
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import time
+import os
 import smtplib
 import requests
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from twilio.rest import Client  # WhatsApp notifications
+from dotenv import load_dotenv
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score
-import threading
-from dotenv import load_dotenv
-from twilio.rest import Client  # For WhatsApp
-import nltk
-nltk.download('vader_lexicon')
-
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-
-sia = SentimentIntensityAnalyzer()
-score = sia.polarity_scores("This is great!")
-print(score)
-
+from sklearn.metrics import classification_report, accuracy_score
+import matplotlib.pyplot as plt
 
 # Load environment variables
 load_dotenv()
 
-# Email & Alert Configs
-EMAIL_SERVER = os.getenv("EMAIL_SERVER", "imap.gmail.com")
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
-SMTP_SERVER = os.getenv("EMAIL_SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
-SMTP_EMAIL = EMAIL_USER
-SMTP_PASS = EMAIL_PASS
-ALERT_RECIPIENT = os.getenv("EMAIL_RECEIVER")
-TEAMS_WEBHOOK = os.getenv("MS_TEAMS_WEBHOOK_URL")
-
-# Twilio for WhatsApp
+# --- Constants ---
+DB_PATH = "escalate_ai.db"
+GMAIL_USER = os.getenv("GMAIL_USER")
+GMAIL_PASS = os.getenv("GMAIL_PASS")
+MS_TEAMS_WEBHOOK = os.getenv("MS_TEAMS_WEBHOOK")
 TWILIO_SID = os.getenv("TWILIO_SID")
-TWILIO_TOKEN = os.getenv("TWILIO_TOKEN")
-TWILIO_PHONE = os.getenv("TWILIO_PHONE")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")  # For alert emails
 
-# Escalation & Database
-DB_PATH = "escalations.db"
-ESCALATION_PREFIX = "SESICE-25"
+# --- Initialize DB connection ---
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+cursor = conn.cursor()
 
-# NLP Analyzer
-analyzer = SentimentIntensityAnalyzer()
+# --- Create necessary tables if not exist ---
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS issues (
+    id TEXT PRIMARY KEY,
+    timestamp TEXT,
+    customer_email TEXT,
+    issue_text TEXT,
+    severity TEXT,
+    criticality TEXT,
+    category TEXT,
+    sentiment REAL,
+    urgency INTEGER,
+    escalation_flag INTEGER,
+    status TEXT,
+    action_taken TEXT,
+    action_owner TEXT,
+    last_update TEXT
+)
+""")
 
-# Negative Keywords
-NEGATIVE_KEYWORDS = {
-    "technical": ["fail", "break", "crash", "defect", "fault", "degrade", "damage", "trip", "malfunction", "blank", "shutdown", "discharge","leak"],
-    "dissatisfaction": ["dissatisfy", "frustrate", "complain", "reject", "delay", "ignore", "escalate", "displease", "noncompliance", "neglect"],
-    "support": ["wait", "pending", "slow", "incomplete", "miss", "omit", "unresolved", "shortage", "no response"],
-    "safety": ["fire", "burn", "flashover", "arc", "explode", "unsafe", "leak", "corrode", "alarm", "incident"],
-    "business": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"]
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS audit_log (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id TEXT,
+    field_changed TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    changed_by TEXT,
+    timestamp TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS feedback (
+    feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id TEXT,
+    parameter TEXT,
+    feedback TEXT,
+    timestamp TEXT
+)
+""")
+
+conn.commit()
+
+# --- Sentiment analyzer setup ---
+sia = SentimentIntensityAnalyzer()
+
+# --- Negative words list (expanded as per your categories) ---
+NEGATIVE_WORDS = {
+    # Technical Failures & Product Malfunction
+    "fail", "break", "crash", "defect", "fault", "degrade", "damage", "trip", "malfunction", "blank", "shutdown", "discharge",
+    # Customer Dissatisfaction & Escalations
+    "dissatisfy", "frustrate", "complain", "reject", "delay", "ignore", "escalate", "displease", "noncompliance", "neglect",
+    # Support Gaps & Operational Delays
+    "wait", "pending", "slow", "incomplete", "miss", "omit", "unresolved", "shortage", "no response",
+    # Hazardous Conditions & Safety Risks
+    "fire", "burn", "flashover", "arc", "explode", "unsafe", "leak", "corrode", "alarm", "incident",
+    # Business Risk & Impact
+    "impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"
 }
 
-# For email polling
-processed_email_uids = set()
-processed_email_uids_lock = threading.Lock()
+# --- Utility functions ---
 
-def ensure_schema():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS escalations (
-            id TEXT PRIMARY KEY,
-            customer TEXT,
-            issue TEXT,
-            sentiment TEXT,
-            urgency TEXT,
-            severity TEXT,
-            criticality TEXT,
-            category TEXT,
-            status TEXT,
-            timestamp TEXT,
-            action_taken TEXT,
-            owner TEXT,
-            escalated TEXT,
-            priority TEXT,
-            escalation_flag TEXT,
-            action_owner TEXT,
-            status_update_date TEXT,
-            user_feedback TEXT,
-            customer_contact TEXT
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            escalation_id TEXT,
-            field_changed TEXT,
-            old_value TEXT,
-            new_value TEXT,
-            timestamp TEXT
-        )
-    ''')
+def generate_issue_id():
+    cursor.execute("SELECT COUNT(*) FROM issues")
+    count = cursor.fetchone()[0] + 1
+    return f"SESICE-{2500000 + count}"
+
+def extract_features(issue_text):
+    # Simple heuristic features: sentiment, negative word count
+    sentiment = sia.polarity_scores(issue_text)['compound']
+    negative_count = sum(word in issue_text.lower() for word in NEGATIVE_WORDS)
+    urgency = 1 if sentiment < -0.3 or negative_count > 2 else 0
+    escalation_flag = 1 if urgency and negative_count > 3 else 0
+    # Severity, criticality, category can be heuristically assigned or ML predicted
+    severity = "High" if escalation_flag else "Low"
+    criticality = "Critical" if "safety" in issue_text.lower() or "fire" in issue_text.lower() else "Normal"
+    category = "Technical" if any(word in issue_text.lower() for word in NEGATIVE_WORDS) else "General"
+    return sentiment, urgency, escalation_flag, severity, criticality, category
+
+def insert_issue(issue):
+    cursor.execute("""
+    INSERT INTO issues (id, timestamp, customer_email, issue_text, severity, criticality, category,
+                        sentiment, urgency, escalation_flag, status, action_taken, action_owner, last_update)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, issue)
     conn.commit()
-    conn.close()
 
-def log_change(escalation_id, field, old, new):
-    if old == new:
-        return
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO audit_log (escalation_id, field_changed, old_value, new_value, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (escalation_id, field, str(old), str(new), datetime.datetime.now().isoformat()))
+def update_issue_field(issue_id, field, new_value, changed_by="System"):
+    # Fetch old value
+    cursor.execute(f"SELECT {field} FROM issues WHERE id = ?", (issue_id,))
+    old_value = cursor.fetchone()[0]
+    if old_value == new_value:
+        return False  # No change
+    cursor.execute(f"UPDATE issues SET {field} = ?, last_update = ? WHERE id = ?", (new_value, datetime.datetime.now().isoformat(), issue_id))
+    # Log audit
+    cursor.execute("""
+    INSERT INTO audit_log (issue_id, field_changed, old_value, new_value, changed_by, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (issue_id, field, str(old_value), str(new_value), changed_by, datetime.datetime.now().isoformat()))
     conn.commit()
-    conn.close()
+    return True
 
-def get_next_escalation_id():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT id FROM escalations WHERE id LIKE '{ESCALATION_PREFIX}%' ORDER BY id DESC LIMIT 1")
-    last = cursor.fetchone()
-    conn.close()
-    last_num = int(last[0].replace(ESCALATION_PREFIX, "")) if last else 0
-    return f"{ESCALATION_PREFIX}{str(last_num + 1).zfill(5)}"
+def fetch_all_issues():
+    df = pd.read_sql_query("SELECT * FROM issues", conn)
+    return df
 
-def send_alert(message, via="email"):
+def send_ms_teams_alert(issue):
+    message = {
+        "text": f"🚨 Escalation Alert 🚨\nID: {issue['id']}\nSeverity: {issue['severity']}\nCustomer: {issue['customer_email']}\nIssue: {issue['issue_text'][:100]}..."
+    }
     try:
-        if via == "email":
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-                server.starttls()
-                server.login(SMTP_EMAIL, SMTP_PASS)
-                server.sendmail(SMTP_EMAIL, ALERT_RECIPIENT, message)
-        elif via == "teams":
-            requests.post(TEAMS_WEBHOOK, json={"text": message})
+        response = requests.post(MS_TEAMS_WEBHOOK, json=message)
+        return response.status_code == 200
     except Exception as e:
-        st.error(f"{via.capitalize()} alert failed: {e}")
+        st.error(f"MS Teams alert failed: {e}")
+        return False
 
-def notify_customer(contact, message, channel="email"):
-    if channel == "email":
-        try:
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-                server.starttls()
-                server.login(SMTP_EMAIL, SMTP_PASS)
-                server.sendmail(SMTP_EMAIL, contact, message)
-        except Exception as e:
-            st.error(f"Customer email notification failed: {e}")
-    elif channel == "whatsapp" and TWILIO_SID:
-        try:
-            client = Client(TWILIO_SID, TWILIO_TOKEN)
-            client.messages.create(
-                body=message,
-                from_=f"whatsapp:{TWILIO_PHONE}",
-                to=f"whatsapp:{contact}"
-            )
-        except Exception as e:
-            st.error(f"WhatsApp notification failed: {e}")
+def send_email(to_email, subject, body):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_USER
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(GMAIL_USER, GMAIL_PASS)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Email sending failed: {e}")
+        return False
 
-# --- NLP & Escalation Logic ---
+def send_whatsapp(to_number, message):
+    try:
+        client = Client(TWILIO_SID, TWILIO_AUTH_TOKEN)
+        client.messages.create(
+            body=message,
+            from_=f'whatsapp:{TWILIO_WHATSAPP_FROM}',
+            to=f'whatsapp:{to_number}'
+        )
+        return True
+    except Exception as e:
+        st.error(f"WhatsApp sending failed: {e}")
+        return False
 
-def analyze_sentiment(text):
-    scores = analyzer.polarity_scores(text)
-    compound = scores['compound']
-    if compound >= 0.05:
-        return "Positive"
-    elif compound <= -0.05:
-        return "Negative"
-    else:
-        return "Neutral"
-
-def detect_urgency(text):
-    # Urgency detection via keywords and sentiment
-    urgency = "Low"
-    negative_words_found = sum(text.lower().count(word) for cat in NEGATIVE_KEYWORDS.values() for word in cat)
-    sentiment = analyzer.polarity_scores(text)['compound']
-    if negative_words_found > 2 or sentiment < -0.4:
-        urgency = "High"
-    elif negative_words_found > 0 or sentiment < -0.1:
-        urgency = "Medium"
-    return urgency
-
-def classify_severity(text):
-    # Simple keyword-based severity
-    for word in NEGATIVE_KEYWORDS["safety"]:
-        if word in text.lower():
-            return "Critical"
-    for word in NEGATIVE_KEYWORDS["business"]:
-        if word in text.lower():
-            return "High"
-    for word in NEGATIVE_KEYWORDS["technical"]:
-        if word in text.lower():
-            return "Medium"
-    return "Low"
-
-def classify_criticality(text):
-    # Placeholder logic, could be extended
-    if "shutdown" in text.lower() or "fire" in text.lower():
-        return "High"
-    elif "delay" in text.lower() or "reject" in text.lower():
-        return "Medium"
-    return "Low"
-
-def detect_category(text):
-    text_lower = text.lower()
-    for cat, keywords in NEGATIVE_KEYWORDS.items():
-        if any(word in text_lower for word in keywords):
-            return cat.capitalize()
-    return "General"
-
-def escalation_flag(urgency, severity):
-    # Escalate if high urgency and high severity
-    if urgency == "High" and severity in ("Critical", "High"):
-        return "Yes"
-    return "No"
-
-
-# --- ML Model ---
-
-def prepare_features(df):
-    # Convert text features to numeric (dummy example)
-    urgency_map = {"Low": 0, "Medium": 1, "High": 2}
-    severity_map = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3}
-    criticality_map = {"Low": 0, "Medium": 1, "High": 2}
-    df["urgency_num"] = df["urgency"].map(urgency_map).fillna(0)
-    df["severity_num"] = df["severity"].map(severity_map).fillna(0)
-    df["criticality_num"] = df["criticality"].map(criticality_map).fillna(0)
-    return df[["urgency_num", "severity_num", "criticality_num"]], df["escalation_flag"].map({"Yes":1, "No":0})
+# --- ML Model & Retraining ---
 
 def train_ml_model():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT urgency, severity, criticality, escalation_flag FROM escalations", conn)
-    conn.close()
-    if df.empty or df.shape[0]<20:
-        return None  # Insufficient data
-    X, y = prepare_features(df)
-    X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,random_state=42)
+    df = fetch_all_issues()
+    if df.empty or 'escalation_flag' not in df.columns:
+        return None, None
+    X = df[['sentiment', 'urgency']]
+    y = df['escalation_flag']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    return model, {"accuracy": acc, "precision": precision, "recall": recall}
+    preds = model.predict(X_test)
+    report = classification_report(y_test, preds)
+    accuracy = accuracy_score(y_test, preds)
+    return model, (report, accuracy)
 
-def predict_escalation(model, urgency, severity, criticality):
-    urgency_map = {"Low": 0, "Medium": 1, "High": 2}
-    severity_map = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3}
-    criticality_map = {"Low": 0, "Medium": 1, "High": 2}
-    features = [[urgency_map.get(urgency,0), severity_map.get(severity,0), criticality_map.get(criticality,0)]]
-    return "Yes" if model and model.predict(features)[0] == 1 else "No"
-
-
-# --- Email Parsing ---
-
-def clean_text(text):
-    # Remove unwanted characters
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
-
-def fetch_emails():
-    global processed_email_uids
-    try:
-        mail = imaplib.IMAP4_SSL(EMAIL_SERVER)
-        mail.login(EMAIL_USER, EMAIL_PASS)
-        mail.select("inbox")
-        status, messages = mail.search(None, 'UNSEEN')
-        mail_ids = messages[0].split()
-        new_records = []
-        for mail_id in mail_ids:
-            with processed_email_uids_lock:
-                if mail_id in processed_email_uids:
-                    continue
-                processed_email_uids.add(mail_id)
-            status, msg_data = mail.fetch(mail_id, "(RFC822)")
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    subject, encoding = decode_header(msg["Subject"])[0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode(encoding if encoding else "utf-8")
-                    from_ = msg.get("From")
-                    date_ = msg.get("Date")
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            content_type = part.get_content_type()
-                            content_dispo = str(part.get("Content-Disposition"))
-                            if content_type == "text/plain" and "attachment" not in content_dispo:
-                                body = part.get_payload(decode=True).decode()
-                                break
-                    else:
-                        body = msg.get_payload(decode=True).decode()
-                    full_text = f"{subject} {body}"
-                    full_text = clean_text(full_text)
-                    # Extract customer from From header or subject if possible
-                    customer = from_
-                    # NLP tagging
-                    sentiment = analyze_sentiment(full_text)
-                    urgency = detect_urgency(full_text)
-                    severity = classify_severity(full_text)
-                    criticality = classify_criticality(full_text)
-                    category = detect_category(full_text)
-                    flag = escalation_flag(urgency, severity)
-                    new_records.append({
-                        "customer": customer,
-                        "issue": full_text,
-                        "sentiment": sentiment,
-                        "urgency": urgency,
-                        "severity": severity,
-                        "criticality": criticality,
-                        "category": category,
-                        "status": "Open",
-                        "timestamp": date_,
-                        "action_taken": "",
-                        "owner": "",
-                        "escalated": flag,
-                        "priority": urgency,
-                        "escalation_flag": flag,
-                        "action_owner": "",
-                        "status_update_date": datetime.datetime.now().isoformat(),
-                        "user_feedback": "",
-                        "customer_contact": customer,
-                    })
-        mail.logout()
-        return new_records
-    except Exception as e:
-        st.error(f"Failed to fetch emails: {e}")
-        return []
-import streamlit as st
-import pandas as pd
-import datetime
-import smtplib
-from email.message import EmailMessage
-import threading
-import json
-import sqlite3
-import logging
-
-# === Database and Logging Setup ===
-
-DB_PATH = "escalate_ai.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS escalations (
-        id TEXT PRIMARY KEY,
-        customer TEXT,
-        issue TEXT,
-        sentiment TEXT,
-        urgency TEXT,
-        severity TEXT,
-        criticality TEXT,
-        category TEXT,
-        status TEXT,
-        timestamp TEXT,
-        action_taken TEXT,
-        owner TEXT,
-        escalated TEXT,
-        priority TEXT,
-        escalation_flag TEXT,
-        action_owner TEXT,
-        status_update_date TEXT,
-        user_feedback TEXT,
-        customer_contact TEXT
-    )
-    ''')
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS audit_log (
-        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        escalation_id TEXT,
-        timestamp TEXT,
-        user TEXT,
-        action TEXT,
-        old_value TEXT,
-        new_value TEXT
-    )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_db()
-
-def log_audit(escalation_id, user, action, old_value, new_value):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO audit_log (escalation_id, timestamp, user, action, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?)",
-        (escalation_id, datetime.datetime.now().isoformat(), user, action, old_value, new_value)
-    )
-    conn.commit()
-    conn.close()
-
-# === Data Insertion/Update ===
-
-def generate_new_id():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT id FROM escalations ORDER BY id DESC LIMIT 1")
-    row = c.fetchone()
-    conn.close()
-    if row:
-        last_id = row[0]
-        last_num = int(last_id.split("-")[-1])
-        new_num = last_num + 1
+def predict_escalation(model, issue_text):
+    sentiment = sia.polarity_scores(issue_text)['compound']
+    negative_count = sum(word in issue_text.lower() for word in NEGATIVE_WORDS)
+    urgency = 1 if sentiment < -0.3 or negative_count > 2 else 0
+    if model:
+        pred = model.predict(np.array([[sentiment, urgency]]))[0]
     else:
-        new_num = 2500001
-    return f"SESICE-{new_num:07d}"
+        pred = 0
+    return pred
 
-def insert_escalation(record):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    new_id = generate_new_id()
-    record['id'] = new_id
-    c.execute('''
-        INSERT INTO escalations (id, customer, issue, sentiment, urgency, severity, criticality,
-        category, status, timestamp, action_taken, owner, escalated, priority, escalation_flag,
-        action_owner, status_update_date, user_feedback, customer_contact)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        record['id'], record['customer'], record['issue'], record['sentiment'], record['urgency'],
-        record['severity'], record['criticality'], record['category'], record['status'],
-        record['timestamp'], record['action_taken'], record['owner'], record['escalated'],
-        record['priority'], record['escalation_flag'], record['action_owner'],
-        record['status_update_date'], record['user_feedback'], record['customer_contact']
-    ))
-    conn.commit()
-    conn.close()
-    return new_id
-
-def update_escalation_status(escalation_id, new_status, user):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT status FROM escalations WHERE id = ?", (escalation_id,))
-    old_status = c.fetchone()[0]
-    c.execute("UPDATE escalations SET status = ?, status_update_date = ? WHERE id = ?", (new_status, datetime.datetime.now().isoformat(), escalation_id))
-    conn.commit()
-    conn.close()
-    log_audit(escalation_id, user, "Status Change", old_status, new_status)
-
-def update_escalation_field(escalation_id, field, new_value, user):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(f"SELECT {field} FROM escalations WHERE id = ?", (escalation_id,))
-    old_value = c.fetchone()[0]
-    c.execute(f"UPDATE escalations SET {field} = ?, status_update_date = ? WHERE id = ?", (new_value, datetime.datetime.now().isoformat(), escalation_id))
-    conn.commit()
-    conn.close()
-    log_audit(escalation_id, user, f"Field Update: {field}", old_value, new_value)
-
-def get_all_escalations():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT * FROM escalations", conn)
-    conn.close()
-    return df
-
-# === MS Teams & Email Alerts ===
-
-def send_teams_alert(message: str):
-    import requests
-    payload = {"text": message}
-    try:
-        response = requests.post(MS_TEAMS_WEBHOOK_URL, json=payload)
-        if response.status_code == 200:
-            st.success("MS Teams alert sent.")
-        else:
-            st.error(f"Failed to send Teams alert: {response.status_code}")
-    except Exception as e:
-        st.error(f"Teams alert error: {e}")
-
-def send_email_alert(to_email: str, subject: str, body: str):
-    try:
-        msg = EmailMessage()
-        msg.set_content(body)
-        msg['Subject'] = subject
-        msg['From'] = EMAIL_USER
-        msg['To'] = to_email
-        with smtplib.SMTP_SSL(EMAIL_SERVER, 465) as smtp:
-            smtp.login(EMAIL_USER, EMAIL_PASS)
-            smtp.send_message(msg)
-        st.success("Email alert sent.")
-    except Exception as e:
-        st.error(f"Email alert error: {e}")
-
-# === Status Change Notification (Email / WhatsApp) ===
-
-def notify_customer(escalation_id, new_status):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT customer_contact, issue FROM escalations WHERE id = ?", (escalation_id,))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        return
-    contact, issue = row
-    message = f"Dear Customer,\n\nYour issue with ID {escalation_id} has changed status to '{new_status}'.\nIssue summary:\n{issue}\n\nThank you."
-    # Send email notification
-    send_email_alert(contact, f"Status Update for {escalation_id}", message)
-    # Optionally, implement WhatsApp notification (needs 3rd party API)
-    # Placeholder: st.info("WhatsApp notification sent (placeholder).")
-
-# === Feedback and Retraining ===
-
-def retrain_model_on_feedback():
-    model_metrics = None
-    model = None
-    try:
-        model, model_metrics = train_ml_model()
-        if model_metrics:
-            st.success(f"Retrained model with Accuracy: {model_metrics['accuracy']:.2f}, Precision: {model_metrics['precision']:.2f}, Recall: {model_metrics['recall']:.2f}")
-        else:
-            st.info("Insufficient data for retraining.")
-    except Exception as e:
-        st.error(f"Retraining error: {e}")
-    return model, model_metrics
-
-# === Search & Filter ===
-
-def filter_escalations(df, filters):
-    # Filters dict keys: status, customer, category, urgency, severity, text_search
-    if filters.get("status") and filters["status"] != "All":
-        df = df[df["status"] == filters["status"]]
-    if filters.get("customer") and filters["customer"]:
-        df = df[df["customer"].str.contains(filters["customer"], case=False, na=False)]
-    if filters.get("category") and filters["category"] != "All":
-        df = df[df["category"] == filters["category"]]
-    if filters.get("urgency") and filters["urgency"] != "All":
-        df = df[df["urgency"] == filters["urgency"]]
-    if filters.get("severity") and filters["severity"] != "All":
-        df = df[df["severity"] == filters["severity"]]
-    if filters.get("text_search") and filters["text_search"]:
-        df = df[df["issue"].str.contains(filters["text_search"], case=False, na=False)]
-    return df
-
-# === Dashboard ===
-
-def render_dashboard(df):
-    st.title("EscalateAI Dashboard")
-
-    total = len(df)
-    open_issues = len(df[df["status"] == "Open"])
-    escalated = len(df[df["escalated"] == "Yes"])
-    critical = len(df[df["severity"] == "Critical"])
-    high_urgency = len(df[df["urgency"] == "High"])
-
-    st.metric("Total Issues", total)
-    st.metric("Open Issues", open_issues)
-    st.metric("Escalated Issues", escalated)
-    st.metric("Critical Severity", critical)
-    st.metric("High Urgency", high_urgency)
-
-    st.subheader("Issues by Status")
-    st.bar_chart(df["status"].value_counts())
-
-    st.subheader("Issues by Category")
-    st.bar_chart(df["category"].value_counts())
-
-    st.subheader("Issues by Severity")
-    st.bar_chart(df["severity"].value_counts())
-
-# === NLP Feedback Parsing ===
-
-def parse_nlp_feedback(feedback_text):
-    # Basic sentiment on feedback text and classify feedback type
-    sentiment = analyze_sentiment(feedback_text)
-    if "resolved" in feedback_text.lower() or "thank" in feedback_text.lower():
-        feedback_type = "Positive"
-    elif "delay" in feedback_text.lower() or "not fixed" in feedback_text.lower():
-        feedback_type = "Negative"
-    else:
-        feedback_type = "Neutral"
-    return sentiment, feedback_type
-
-# === Streamlit UI Integration ===
-
-def escalate_ai_app():
-    st.sidebar.title("EscalateAI Controls")
-
-    # Buttons for MS Teams and Email alerting
-    if st.sidebar.button("Send MS Teams Alert for Escalations"):
-        df = get_all_escalations()
-        escalated_df = df[df["escalated"] == "Yes"]
-        if not escalated_df.empty:
-            message = f"Escalated cases count: {len(escalated_df)}"
-            send_teams_alert(message)
-        else:
-            st.info("No escalated cases to alert.")
-
-    if st.sidebar.button("Send Email Alert for Escalations"):
-        df = get_all_escalations()
-        escalated_df = df[df["escalated"] == "Yes"]
-        if not escalated_df.empty:
-            # Sending to admin email for example
-            send_email_alert(EMAIL_USER, "Escalated Cases Alert", f"Escalated cases count: {len(escalated_df)}")
-        else:
-            st.info("No escalated cases to alert.")
-
-    # Load data and filter UI
-    df = get_all_escalations()
-    status_options = ["All"] + sorted(df["status"].dropna().unique().tolist())
-    category_options = ["All"] + sorted(df["category"].dropna().unique().tolist())
-    urgency_options = ["All", "Low", "Medium", "High"]
-    severity_options = ["All", "Low", "Medium", "High", "Critical"]
-
-    filters = {
-        "status": st.sidebar.selectbox("Filter by Status", status_options, index=0),
-        "customer": st.sidebar.text_input("Filter by Customer"),
-        "category": st.sidebar.selectbox("Filter by Category", category_options, index=0),
-        "urgency": st.sidebar.selectbox("Filter by Urgency", urgency_options, index=0),
-        "severity": st.sidebar.selectbox("Filter by Severity", severity_options, index=0),
-        "text_search": st.sidebar.text_input("Search in Issues")
+# --- Feedback NLP parsing ---
+def parse_feedback_text(feedback_text):
+    # Simple sentiment + keyword extraction for demo
+    sentiment = sia.polarity_scores(feedback_text)['compound']
+    contains_negative = any(word in feedback_text.lower() for word in NEGATIVE_WORDS)
+    return {
+        "sentiment": sentiment,
+        "contains_negative_words": contains_negative
     }
 
-    filtered_df = filter_escalations(df, filters)
+# --- Dashboard summary ---
+def draw_dashboard(df):
+    st.subheader("EscalateAI Dashboard Summary")
+    total_issues = len(df)
+    escalated = df[df['escalation_flag'] == 1]
+    escalated_count = len(escalated)
+    sla_breaches = len(df[(df['status'] != "Resolved") & (pd.to_datetime(df['timestamp']) < (datetime.datetime.now() - datetime.timedelta(minutes=10)))])
+    st.metric("Total Issues Logged", total_issues)
+    st.metric("Total Escalated", escalated_count)
+    st.metric("SLA Breaches", sla_breaches)
+    # Severity distribution chart
+    severity_counts = df['severity'].value_counts()
+    fig, ax = plt.subplots()
+    ax.bar(severity_counts.index, severity_counts.values, color='orange')
+    ax.set_title("Severity Distribution")
+    st.pyplot(fig)
 
-    tab1, tab2, tab3 = st.tabs(["Dashboard", "Kanban / Table View", "Audit Log"])
+# --- Main Streamlit UI ---
 
-    with tab1:
-        render_dashboard(filtered_df)
+def main():
+    st.set_page_config(page_title="EscalateAI vFinal", layout="wide", initial_sidebar_state="expanded")
 
-    with tab2:
-        # Show Kanban-like status summary for escalated cases
-        escalated_df = filtered_df[filtered_df["escalated"] == "Yes"]
-        status_counts = escalated_df["status"].value_counts().to_dict()
-        st.write("### Escalated Cases Status Summary")
-        st.write(pd.DataFrame.from_dict(status_counts, orient='index', columns=["Count"]))
+    st.title("EscalateAI — Customer Escalation & AI Management")
 
-        # Table view with edit options
-        edited_index = None
-        st.write("### Escalated Cases Detail")
-        for idx, row in escalated_df.iterrows():
-            with st.expander(f"{row['id']} - {row['customer']} - Status: {row['status']}"):
-                st.write(f"Issue: {row['issue']}")
-                st.write(f"Urgency: {row['urgency']} | Severity: {row['severity']} | Category: {row['category']}")
-                new_status = st.selectbox("Change Status", options=status_options[1:], index=status_options.index(row['status'])-1, key=f"status_{row['id']}")
-                new_owner = st.text_input("Action Owner", value=row.get('owner',''), key=f"owner_{row['id']}")
-                new_action = st.text_area("Action Taken", value=row.get('action_taken',''), key=f"action_{row['id']}")
-                new_feedback = st.text_area("Customer Feedback", value=row.get('user_feedback',''), key=f"feedback_{row['id']}")
+    # --- Sidebar ---
+    st.sidebar.header("Controls & Filters")
 
-                if st.button("Save Changes", key=f"save_{row['id']}"):
-                    # Update DB if changed
-                    if new_status != row['status']:
-                        update_escalation_status(row['id'], new_status, "User")
-                        notify_customer(row['id'], new_status)
-                        st.success(f"Status updated and customer notified for {row['id']}.")
-                    if new_owner != row.get('owner',''):
-                        update_escalation_field(row['id'], "owner", new_owner, "User")
-                    if new_action != row.get('action_taken',''):
-                        update_escalation_field(row['id'], "action_taken", new_action, "User")
-                    if new_feedback != row.get('user_feedback',''):
-                        update_escalation_field(row['id'], "user_feedback", new_feedback, "User")
-                        # NLP parse feedback and retrain model
-                        sentiment, fb_type = parse_nlp_feedback(new_feedback)
-                        st.info(f"Feedback Sentiment: {sentiment}, Type: {fb_type}")
-                        retrain_model_on_feedback()
+    # Show count summary for escalated cases in sidebar
+    all_issues = fetch_all_issues()
+    escalated_issues = all_issues[all_issues['escalation_flag'] == 1] if not all_issues.empty else pd.DataFrame()
+    status_counts = escalated_issues['status'].value_counts() if not escalated_issues.empty else pd.Series()
+    st.sidebar.markdown("### Escalated Cases Status Summary")
+    if not status_counts.empty:
+        for status, count in status_counts.items():
+            st.sidebar.write(f"- **{status}**: {count}")
+    else:
+        st.sidebar.write("No escalated cases found.")
 
-    with tab3:
-        st.write("### Audit Log")
-        conn = sqlite3.connect(DB_PATH)
-        audit_df = pd.read_sql_query("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 50", conn)
-        conn.close()
-        st.dataframe(audit_df)
+    # Search & Filter input for Kanban
+    search_term = st.sidebar.text_input("Search issues (text or email):").strip()
+
+    # Status filter for Kanban view
+    kanban_status_filter = st.sidebar.selectbox("Filter by Status:", options=["All", "Open", "In Progress", "Resolved", "Escalated"])
+
+    # Buttons for Alerts
+    if st.sidebar.button("Send MS Teams Alerts"):
+        if escalated_issues.empty:
+            st.sidebar.warning("No escalated issues to alert.")
+        else:
+            successes = 0
+            for _, issue in escalated_issues.iterrows():
+                if send_ms_teams_alert(issue):
+                    successes += 1
+            st.sidebar.success(f"MS Teams alerts sent for {successes} issues.")
+
+    if st.sidebar.button("Send Email Alerts"):
+        if escalated_issues.empty:
+            st.sidebar.warning("No escalated issues to alert.")
+        else:
+            successes = 0
+            for _, issue in escalated_issues.iterrows():
+                body = f"Escalated issue detected:\nID: {issue['id']}\nCustomer: {issue['customer_email']}\nIssue: {issue['issue_text'][:100]}"
+                if send_email(issue['customer_email'], "Escalation Alert from EscalateAI", body):
+                    successes += 1
+            st.sidebar.success(f"Email alerts sent for {successes} issues.")
+
+    # Excel Upload (existing functionality retained)
+    st.sidebar.markdown("---")
+    uploaded_file = st.sidebar.file_uploader("Upload Issues Excel", type=["xlsx"])
+    if uploaded_file:
+        try:
+            df_upload = pd.read_excel(uploaded_file)
+            for _, row in df_upload.iterrows():
+                issue_text = row.get("issue_text", "")
+                customer_email = row.get("customer_email", "")
+                sentiment, urgency, escalation_flag, severity, criticality, category = extract_features(issue_text)
+                issue_id = generate_issue_id()
+                issue = (
+                    issue_id,
+                    datetime.datetime.now().isoformat(),
+                    customer_email,
+                    issue_text,
+                    severity,
+                    criticality,
+                    category,
+                    sentiment,
+                    urgency,
+                    escalation_flag,
+                    "Open",
+                    "",
+                    "",
+                    datetime.datetime.now().isoformat()
+                )
+                insert_issue(issue)
+            st.sidebar.success("Issues uploaded successfully.")
+        except Exception as e:
+            st.sidebar.error(f"Failed to upload Excel: {e}")
+
+    # --- Tabs for main content ---
+    tabs = st.tabs(["Kanban Board", "Escalated Cases", "Dashboard", "Feedback & Retraining", "Audit Log"])
+
+    # --- Tab 1: Kanban Board ---
+    with tabs[0]:
+        st.header("Kanban Board")
+        df_kanban = all_issues.copy()
+
+        # Apply search & filter
+        if search_term:
+            df_kanban = df_kanban[
+                df_kanban['issue_text'].str.contains(search_term, case=False, na=False) |
+                df_kanban['customer_email'].str.contains(search_term, case=False, na=False) |
+                df_kanban['id'].str.contains(search_term, case=False, na=False)
+            ]
+        if kanban_status_filter != "All":
+            df_kanban = df_kanban[df_kanban['status'] == kanban_status_filter]
+
+        # Display Kanban columns
+        statuses = ["Open", "In Progress", "Resolved", "Escalated"]
+        cols = st.columns(len(statuses))
+        for idx, status in enumerate(statuses):
+            with cols[idx]:
+                st.subheader(status)
+                status_issues = df_kanban[df_kanban['status'] == status]
+                for _, row in status_issues.iterrows():
+                    with st.expander(f"{row['id']} | {row['customer_email']}"):
+                        st.write(f"**Issue:** {row['issue_text']}")
+                        st.write(f"**Severity:** {row['severity']}")
+                        st.write(f"**Criticality:** {row['criticality']}")
+                        st.write(f"**Category:** {row['category']}")
+                        st.write(f"**Sentiment:** {row['sentiment']:.2f}")
+                        st.write(f"**Urgency:** {row['urgency']}")
+                        st.write(f"**Escalation:** {'Yes' if row['escalation_flag'] else 'No'}")
+
+                        # Editable fields: status, action_taken, action_owner
+                        new_status = st.selectbox(f"Change Status (current: {row['status']})", options=statuses, key=f"status_{row['id']}")
+                        action_taken = st.text_input("Action Taken", value=row['action_taken'] or "", key=f"action_{row['id']}")
+                        action_owner = st.text_input("Action Owner", value=row['action_owner'] or "", key=f"owner_{row['id']}")
+
+                        if st.button("Save Changes", key=f"save_{row['id']}"):
+                            changed = False
+                            if new_status != row['status']:
+                                changed |= update_issue_field(row['id'], 'status', new_status)
+                                # Notify customer on status change
+                                notify_body = f"Your issue {row['id']} status has been updated to '{new_status}'. If you have questions, reply to this email."
+                                send_email(row['customer_email'], f"Issue {row['id']} Status Update", notify_body)
+                                # You can add WhatsApp notify here as well, e.g. send_whatsapp(...)
+                            if action_taken != row['action_taken']:
+                                changed |= update_issue_field(row['id'], 'action_taken', action_taken)
+                            if action_owner != row['action_owner']:
+                                changed |= update_issue_field(row['id'], 'action_owner', action_owner)
+                            if changed:
+                                st.success(f"Issue {row['id']} updated.")
+                            else:
+                                st.info("No changes detected.")
+
+    # --- Tab 2: Escalated Cases Table ---
+    with tabs[1]:
+        st.header("Escalated Cases")
+        escalated_df = all_issues[all_issues['escalation_flag'] == 1]
+        if not escalated_df.empty:
+            st.dataframe(escalated_df)
+        else:
+            st.info("No escalated cases to show.")
+
+    # --- Tab 3: Dashboard ---
+    with tabs[2]:
+        draw_dashboard(all_issues)
+
+    # --- Tab 4: Feedback & Retraining ---
+    with tabs[3]:
+        st.header("Feedback & Retraining")
+        # Select issue for feedback
+        issue_ids = all_issues['id'].tolist() if not all_issues.empty else []
+        selected_issue_id = st.selectbox("Select Issue ID for Feedback", options=["
+# ========== CONTINUED: Kanban Board UI and Editing ==========
+
+def update_issue_status(db_conn, issue_id, new_status):
+    cursor = db_conn.cursor()
+    cursor.execute("UPDATE issues SET status = ? WHERE id = ?", (new_status, issue_id))
+    db_conn.commit()
+
+def update_issue_action_taken(db_conn, issue_id, action_taken):
+    cursor = db_conn.cursor()
+    cursor.execute("UPDATE issues SET action_taken = ? WHERE id = ?", (action_taken, issue_id))
+    db_conn.commit()
+
+def update_issue_action_owner(db_conn, issue_id, action_owner):
+    cursor = db_conn.cursor()
+    cursor.execute("UPDATE issues SET action_owner = ? WHERE id = ?", (action_owner, issue_id))
+    db_conn.commit()
+
+def insert_audit_log(db_conn, issue_id, user, action_desc):
+    cursor = db_conn.cursor()
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "INSERT INTO audit_log (issue_id, user, action, timestamp) VALUES (?, ?, ?, ?)",
+        (issue_id, user, action_desc, timestamp)
+    )
+    db_conn.commit()
+
+def send_status_change_notification(issue, new_status):
+    # Send notification via Email or WhatsApp based on available contact info
+    msg = f"Dear {issue['customer_name']},\n\nYour issue ({issue['issue_id']}) status has been updated to '{new_status}'.\n\nThank you."
+    if issue.get('email'):
+        send_email(issue['email'], f"Issue {issue['issue_id']} Status Update", msg)
+    if issue.get('whatsapp'):
+        send_whatsapp_message(issue['whatsapp'], msg)
+
+def kanban_board_ui(db_conn):
+    st.header("Issue Kanban Board")
+
+    # Fetch issues from DB
+    df = get_issues(db_conn)
+
+    # Filters
+    status_filter = st.sidebar.multiselect(
+        "Filter by Status",
+        options=['Open', 'In Progress', 'Resolved', 'Escalated'],
+        default=['Open', 'In Progress', 'Resolved', 'Escalated']
+    )
+    filtered_df = df[df['status'].isin(status_filter)]
+
+    search_term = st.sidebar.text_input("Search by Customer/Account/Issue")
+
+    if search_term:
+        filtered_df = filtered_df[
+            filtered_df.apply(lambda row: search_term.lower() in str(row['customer_name']).lower()
+                              or search_term.lower() in str(row['account']).lower()
+                              or search_term.lower() in str(row['issue_description']).lower(), axis=1)
+        ]
+
+    # Group by Status for Kanban columns
+    statuses = ['Open', 'In Progress', 'Resolved', 'Escalated']
+    columns = st.columns(len(statuses))
+
+    for idx, status in enumerate(statuses):
+        with columns[idx]:
+            st.subheader(f"{status} ({len(filtered_df[filtered_df['status'] == status])})")
+            status_issues = filtered_df[filtered_df['status'] == status]
+
+            for _, issue in status_issues.iterrows():
+                with st.expander(f"{issue['issue_id']}: {issue['issue_description'][:40]}..."):
+                    st.write(f"**Customer:** {issue['customer_name']}")
+                    st.write(f"**Account:** {issue['account']}")
+                    st.write(f"**Severity:** {issue['severity']}")
+                    st.write(f"**Criticality:** {issue['criticality']}")
+                    st.write(f"**Category:** {issue['category']}")
+                    st.write(f"**Sentiment Score:** {issue['sentiment_score']:.2f}")
+                    st.write(f"**Urgency:** {issue['urgency']}")
+                    st.write(f"**Escalation Flag:** {issue['escalation_flag']}")
+                    st.write(f"**Action Taken:** {issue['action_taken']}")
+                    st.write(f"**Action Owner:** {issue['action_owner']}")
+                    st.write(f"**Created At:** {issue['created_at']}")
+                    st.write(f"**Last Updated:** {issue['last_updated']}")
+
+                    # Editable fields
+                    new_status = st.selectbox(f"Change Status ({issue['issue_id']})", statuses, index=statuses.index(issue['status']))
+                    new_action_taken = st.text_area(f"Action Taken ({issue['issue_id']})", issue['action_taken'] or "")
+                    new_action_owner = st.text_input(f"Action Owner ({issue['issue_id']})", issue['action_owner'] or "")
+
+                    if st.button(f"Update Issue {issue['issue_id']}", key=f"update_{issue['issue_id']}"):
+                        update_issue_status(db_conn, issue['id'], new_status)
+                        update_issue_action_taken(db_conn, issue['id'], new_action_taken)
+                        update_issue_action_owner(db_conn, issue['id'], new_action_owner)
+                        insert_audit_log(db_conn, issue['id'], "User", f"Status changed to {new_status}")
+                        send_status_change_notification(issue, new_status)
+                        st.success(f"Issue {issue['issue_id']} updated successfully.")
+                        st.experimental_rerun()
+
+def feedback_and_retraining_ui(db_conn):
+    st.header("Feedback & Model Retraining")
+
+    # Select escalated issues for feedback
+    df = get_issues(db_conn)
+    escalated_issues = df[df['status'] == 'Escalated']
+
+    issue_ids = escalated_issues['issue_id'].tolist()
+    selected_issue_id = st.selectbox("Select Escalated Issue for Feedback", issue_ids)
+
+    if selected_issue_id:
+        issue = escalated_issues[escalated_issues['issue_id'] == selected_issue_id].iloc[0]
+        st.write(f"**Issue Description:** {issue['issue_description']}")
+        st.write(f"**Current Severity:** {issue['severity']}")
+        st.write(f"**Current Criticality:** {issue['criticality']}")
+        st.write(f"**Current Category:** {issue['category']}")
+        st.write(f"**Current Escalation Flag:** {issue['escalation_flag']}")
+
+        st.subheader("Provide Feedback")
+
+        new_severity = st.selectbox("Severity", ["Low", "Medium", "High"], index=["Low", "Medium", "High"].index(issue['severity']))
+        new_criticality = st.selectbox("Criticality", ["Low", "Medium", "High"], index=["Low", "Medium", "High"].index(issue['criticality']))
+        new_category = st.text_input("Category", issue['category'])
+        new_escalation_flag = st.checkbox("Escalation Flag", value=bool(issue['escalation_flag']))
+
+        if st.button("Submit Feedback and Retrain Model"):
+            # Update DB
+            cursor = db_conn.cursor()
+            cursor.execute(
+                """UPDATE issues SET severity = ?, criticality = ?, category = ?, escalation_flag = ? WHERE issue_id = ?""",
+                (new_severity, new_criticality, new_category, int(new_escalation_flag), selected_issue_id)
+            )
+            db_conn.commit()
+
+            # Retrain model with updated dataset
+            retrain_ml_model(db_conn)
+            st.success("Feedback saved and model retrained successfully.")
+
+def retrain_ml_model(db_conn):
+    st.info("Retraining ML model...")
+
+    # Fetch data
+    df = get_issues(db_conn)
+
+    # Prepare training data
+    X = df['issue_description'].values
+    y = df['escalation_flag'].astype(int).values
+
+    vectorizer = TfidfVectorizer(max_features=1000)
+    X_vec = vectorizer.fit_transform(X)
+
+    model = LogisticRegression(max_iter=1000)
+    model.fit(X_vec, y)
+
+    # Save model and vectorizer to disk (or DB) - placeholder
+    # For demonstration, just store in session_state
+    st.session_state['ml_model'] = model
+    st.session_state['vectorizer'] = vectorizer
+
+    st.success("Model retraining complete.")
+
+def ml_prediction_ui(db_conn):
+    st.header("Predict Escalation for New Issue")
+
+    issue_text = st.text_area("Enter Issue Description")
+
+    if st.button("Predict Escalation"):
+        if not issue_text.strip():
+            st.warning("Please enter issue description.")
+            return
+
+        if 'ml_model' not in st.session_state or 'vectorizer' not in st.session_state:
+            st.warning("ML model not found, retraining first...")
+            retrain_ml_model(db_conn)
+
+        model = st.session_state['ml_model']
+        vectorizer = st.session_state['vectorizer']
+
+        X_vec = vectorizer.transform([issue_text])
+        pred = model.predict(X_vec)[0]
+        proba = model.predict_proba(X_vec)[0][1]
+
+        st.write(f"Predicted Escalation Flag: {'Yes' if pred == 1 else 'No'}")
+        st.write(f"Probability of Escalation: {proba:.2f}")
+
+def audit_log_ui(db_conn):
+    st.header("Audit Log")
+
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT id, issue_id, user, action, timestamp FROM audit_log ORDER BY timestamp DESC LIMIT 100")
+    rows = cursor.fetchall()
+
+    if rows:
+        df = pd.DataFrame(rows, columns=['ID', 'Issue ID', 'User', 'Action', 'Timestamp'])
+        st.dataframe(df)
+    else:
+        st.info("No audit log entries found.")
+
+def sidebar_summary(db_conn):
+    st.sidebar.markdown("## Escalation Status Summary")
+    df = get_issues(db_conn)
+    escalated = df[df['status'] == 'Escalated']
+
+    count_open = len(escalated[escalated['status'] == 'Open'])
+    count_in_progress = len(escalated[escalated['status'] == 'In Progress'])
+    count_resolved = len(escalated[escalated['status'] == 'Resolved'])
+    count_escalated = len(escalated)
+
+    st.sidebar.write(f"**Total Escalated Issues:** {count_escalated}")
+    st.sidebar.write(f"Open: {count_open}")
+    st.sidebar.write(f"In Progress: {count_in_progress}")
+    st.sidebar.write(f"Resolved: {count_resolved}")
+
+def main():
+    st.set_page_config(page_title="EscalateAI Final", layout="wide")
+    db_conn = init_db()
+
+    sidebar_summary(db_conn)
+
+    st.sidebar.title("EscalateAI Controls")
+    page = st.sidebar.radio("Navigate", [
+        "Dashboard",
+        "Kanban Board",
+        "Upload Issues (Excel)",
+        "Fetch Emails",
+        "Feedback & Retrain",
+        "ML Prediction",
+        "Audit Log"
+    ])
+
+    if page == "Dashboard":
+        dashboard_ui(db_conn)
+    elif page == "Kanban Board":
+        kanban_board_ui(db_conn)
+    elif page == "Upload Issues (Excel)":
+        excel_upload_ui(db_conn)
+    elif page == "Fetch Emails":
+        fetch_emails_ui(db_conn)
+    elif page == "Feedback & Retrain":
+        feedback_and_retraining_ui(db_conn)
+    elif page == "ML Prediction":
+        ml_prediction_ui(db_conn)
+    elif page == "Audit Log":
+        audit_log_ui(db_conn)
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Alerting")
+    if st.sidebar.button("Send MS Teams Alert"):
+        send_ms_teams_alert(db_conn)
+        st.sidebar.success("MS Teams alert sent.")
+
+    if st.sidebar.button("Send Email Alert"):
+        send_email_alert(db_conn)
+        st.sidebar.success("Email alert sent.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Quick Search")
+    search_text = st.sidebar.text_input("Search Issues")
+    if search_text:
+        df = get_issues(db_conn)
+        filtered = df[df.apply(lambda r: search_text.lower() in str(r['customer_name']).lower() or
+                                        search_text.lower() in str(r['issue_description']).lower() or
+                                        search_text.lower() in str(r['account']).lower(), axis=1)]
+        st.write(f"### Search Results for '{search_text}' ({len(filtered)})")
+        st.dataframe(filtered)
 
 if __name__ == "__main__":
-    # Initialize global vars, e.g. NLP analyzer, config, etc.
-    from nltk.sentiment.vader import SentimentIntensityAnalyzer
-    analyzer = SentimentIntensityAnalyzer()
-
-    # You need to define your EMAIL_USER, EMAIL_PASS, EMAIL_SERVER, MS_TEAMS_WEBHOOK_URL above or in config
-    # Example placeholders:
-    EMAIL_USER = "your_email@example.com"
-    EMAIL_PASS = "your_password"
-    EMAIL_SERVER = "smtp.example.com"
-    MS_TEAMS_WEBHOOK_URL = "https://outlook.office.com/webhook/your_webhook_url"
-
-    # Run the app
-    escalate_ai_app()
+    main()
