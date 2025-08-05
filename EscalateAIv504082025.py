@@ -421,17 +421,27 @@ ensure_schema()
 st.set_page_config(layout="wide")
 #st.title("🚨 EscalateAI – Customer Escalation Management System")
 st.markdown(
-    """
-    <style>
-    /* Your CSS from above */
-    </style>
-    <header>
-        <div>
-            <h1 style="margin: 0; padding-left: 20px;">🚨 EscalateAI – Customer Escalation Management System</h1>
-        </div>
-    </header>
-    """,
-    unsafe_allow_html=True
+"""
+<style>
+header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 999;
+  background-color: white;
+  padding: 10px 20px;
+  box-shadow: 0px 2px 8px rgba(0,0,0,0.1);
+}
+body {
+  margin-top: 80px;  /* Give space below the fixed header */
+}
+</style>
+<header>
+  <h1 style="margin: 0;">🚨 EscalateAI – Customer Escalation Management System</h1>
+</header>
+""",
+unsafe_allow_html=True
 )
 
 # Sidebar controls
