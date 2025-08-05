@@ -634,32 +634,53 @@ with tabs[0]:
     st.markdown(f"**Open:** {open_count} | **In Progress:** {inprogress_count} | **Resolved:** {resolved_count}")
 
     col1, col2, col3 = st.columns(3)
-    for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
-        with col:
-            # Column header with color
-            col.markdown(f"<h3 style='background-color:{STATUS_COLORS[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>", unsafe_allow_html=True)
-            bucket = df[df["status"] == status]
-            for i, row in bucket.iterrows():
-                flag = "🚩" if row['escalated'] == 'Yes' else ""
-                header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
-                urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
-                expander_label = f"{row['id']} - {row['customer']} {flag}"
-                with st.expander(expander_label, expanded=False):
-                    st.markdown(f"**Issue:** {row['issue']}")
-                    st.markdown(f"**Severity:** <span style='color:{header_color};font-weight:bold;'>{row['severity']}</span>", unsafe_allow_html=True)
-                    st.markdown(f"**Criticality:** {row['criticality']}")
-                    st.markdown(f"**Category:** {row['category']}")
-                    st.markdown(f"**Sentiment:** {row['sentiment']}")
-                    st.markdown(f"**Urgency:** <span style='color:{urgency_color};font-weight:bold;'>{row['urgency']}</span>", unsafe_allow_html=True)
-                    st.markdown(f"**Escalated:** {row['escalated']}")
-                    # Editable status, action taken, owner
-                    new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row["status"]), key=f"status_{row['id']}")
-                    new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
-                    new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
-                    if st.button("💾 Save Changes", key=f"save_{row['id']}"):
-                        update_escalation_status(row['id'], new_status, new_action, new_owner)
-                        st.success("Escalation updated.")
+for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
+    with col:
+        col.markdown(f"<h3 style='background-color:{STATUS_COLORS[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>", unsafe_allow_html=True)
+        bucket = df[df["status"] == status]
+        for i, row in bucket.iterrows():
+            flag = "🚩" if row['escalated'] == 'Yes' else ""
+            header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
+            urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
+            expander_label = f"{row['id']} - {row['customer']} {flag}"
+            with st.expander(expander_label, expanded=False):
+                st.markdown(f"**Issue:** {row['issue']}")
+                st.markdown(f"**Severity:** <span style='color:{header_color};font-weight:bold;'>{row['severity']}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Criticality:** {row['criticality']}")
+                st.markdown(f"**Category:** {row['category']}")
+                st.markdown(f"**Sentiment:** {row['sentiment']}")
+                st.markdown(f"**Urgency:** <span style='color:{urgency_color};font-weight:bold;'>{row['urgency']}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Escalated:** {row['escalated']}")
 
+                # Editable fields
+                new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row["status"]), key=f"status_{row['id']}")
+                new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
+                new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
+                new_owner_email = st.text_input("Owner Email", row.get("owner_email", ""), key=f"email_{row['id']}")
+
+                if st.button("💾 Save Changes", key=f"save_{row['id']}"):
+                    update_escalation_status(row['id'], new_status, new_action, new_owner, new_owner_email)
+                    st.success("Escalation updated.")
+
+                    notification_message = f"""
+                    🔔 Hello {new_owner},
+
+                    The escalation case #{row['id']} assigned to you has been updated:
+
+                    • Status: {new_status}
+                    • Action Taken: {new_action}
+                    • Category: {row['category']}
+                    • Severity: {row['severity']}
+                    • Urgency: {row['urgency']}
+                    • Sentiment: {row['sentiment']}
+
+                    Please review the updates on the EscalateAI dashboard.
+                    """
+
+                    # Trigger email and Teams notifications
+                    send_alert(notification_message.strip(), via="email", recipient=new_owner_email)
+                    send_alert(notification_message.strip(), via="teams", recipient=new_owner_email)
+                    
 # --- Escalated issues tab ---
 with tabs[1]:
     st.subheader("🚩 Escalated Issues")
