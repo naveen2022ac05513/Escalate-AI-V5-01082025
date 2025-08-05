@@ -507,6 +507,21 @@ if not breaches.empty:
         f"🚨 SLA breach detected for {len(breaches)} case(s)!"
         f"</div>", unsafe_allow_html=True
     )
+# --- Manual Notification Buttons ---
+st.sidebar.header("🔔 Manual Notifications")
+
+# Text input for custom message
+alert_message = st.sidebar.text_area("Notification Message", "🚨 This is a test alert from EscalateAI.")
+
+# MS Teams Notification Button
+if st.sidebar.button("📤 Send MS Teams Alert"):
+    send_alert(alert_message, via="teams")
+    st.sidebar.success("MS Teams alert sent.")
+
+# Email Notification Button
+if st.sidebar.button("📧 Send Email Alert"):
+    send_alert(alert_message, via="email")
+    st.sidebar.success("Email alert sent.")
 
 # --- Main Tabs ---
 tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
