@@ -421,38 +421,39 @@ ensure_schema()
 st.set_page_config(layout="wide")
 #st.title("🚨 EscalateAI – Customer Escalation Management System")
 st.markdown(
-"""
-<style>
-/* Sticky header styling */
-header {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  background-color: white;
-  z-index: 1000;
-  padding: 16px 24px;
-  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.08);
-  text-align: center;
-}
+    """
+    <style>
+    /* Sticky header styling */
+    .sticky-header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        background-color: white;
+        z-index: 1000;
+        padding: 18px 32px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        text-align: center;
+    }
 
-h1 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-  color: #333333;
-}
+    /* Adjust margin for main container so content isn't hidden */
+    .block-container {
+        padding-top: 100px !important;
+    }
 
-/* Add space below the header so content doesn't overlap */
-body, .main, .block-container {
-  margin-top: 80px !important;
-}
-</style>
-<header>
-  <h1>🚨 EscalateAI – Customer Escalation Management System</h1>
-</header>
-""",
-unsafe_allow_html=True
+    /* Responsive typography */
+    .sticky-header h1 {
+        margin: 0;
+        font-size: 26px;
+        font-weight: 600;
+        color: #333333;
+    }
+    </style>
+    <div class="sticky-header">
+        <h1>🚨 EscalateAI – Customer Escalation Management System</h1>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
 # Sidebar controls
 st.sidebar.header("⚙️ Controls")
