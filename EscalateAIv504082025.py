@@ -134,6 +134,25 @@ def send_alert(message, via="email"):
             requests.post(TEAMS_WEBHOOK, json={"text": message})
         except Exception as e:
             st.error(f"Teams alert failed: {e}")
+def sla_alert_job():
+    while True:
+        df = fetch_escalations()
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        breaches = df[
+            (df['status'] != 'Resolved') & 
+            (df['priority'] == 'high') &
+            ((datetime.datetime.now() - df['timestamp']) > datetime.timedelta(minutes=10))
+        ]
+        if not breaches.empty:
+            message = f"🚨 SLA breach alert: {len(breaches)} unresolved high-priority cases."
+            send_alert(message, via="teams")
+            send_alert(message, via="email")
+        time.sleep(600)  # Every 10 minutes
+
+if 'sla_thread' not in st.session_state:
+    sla_thread = threading.Thread(target=sla_alert_job, daemon=True)
+    sla_thread.start()
+    st.session_state['sla_thread'] = sla_thread
 
 # --- Sentiment & Analysis ---
 def analyze_issue(issue_text):
@@ -163,6 +182,50 @@ if uploaded_file:
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
         insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag, customer_phone)
     st.sidebar.success("Uploaded and processed.")
+st.sidebar.header("⚙️ Manual Controls")
+
+# Fetch Emails
+if st.sidebar.button("📩 Fetch Emails (IMAP)"):
+    emails = parse_emails(EMAIL_SERVER, EMAIL_USER, EMAIL_PASS)
+    count = len(emails)
+    for e in emails:
+        issue = e["issue"]
+        customer = e["customer"]
+        sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
+        insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
+    st.sidebar.success(f"Fetched and processed {count} new emails.")
+
+# MS Teams Alert Button
+if st.sidebar.button("📣 Send MS Teams Alert"):
+    df = fetch_escalations()
+    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    breaches = df[
+        (df['status'] != 'Resolved') & 
+        (df['priority'] == 'high') &
+        ((datetime.datetime.now() - df['timestamp']) > datetime.timedelta(minutes=10))
+    ]
+    if not breaches.empty:
+        message = f"🚨 Manual MS Teams alert: {len(breaches)} SLA breaches."
+        send_alert(message, via="teams")
+        st.sidebar.success("Alert sent.")
+    else:
+        st.sidebar.info("No SLA breaches found.")
+
+# Email Alert Button
+if st.sidebar.button("✉️ Send Email Alert"):
+    df = fetch_escalations()
+    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    breaches = df[
+        (df['status'] != 'Resolved') & 
+        (df['priority'] == 'high') &
+        ((datetime.datetime.now() - df['timestamp']) > datetime.timedelta(minutes=10))
+    ]
+    if not breaches.empty:
+        message = f"🚨 Manual Email alert: {len(breaches)} SLA breaches."
+        send_alert(message, via="email")
+        st.sidebar.success("Alert sent.")
+    else:
+        st.sidebar.info("No SLA breaches found.")
 
 # --- Kanban Tab ---
 st.subheader("📊 Escalation Kanban Board")
