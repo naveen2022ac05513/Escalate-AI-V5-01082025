@@ -445,6 +445,7 @@ def colored_text(text, color):
 ensure_schema()
 
 st.set_page_config(layout="wide")
+
 #st.title("🚨 EscalateAI – Customer Escalation Management System")
 st.markdown(
     """
@@ -453,7 +454,7 @@ st.markdown(
     </style>
     <header>
         <div>
-            <h1 style="margin: 0; padding-left: 20px;">🚨 EscalateAI – Customer Escalation Management System</h1>
+            <h1 style="margin: 0; padding-left: 20px;">🚨 EscalateAI – AI Based Customer Escalation Prediction & Management Tool </h1>
         </div>
     </header>
     """,
