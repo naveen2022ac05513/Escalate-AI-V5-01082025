@@ -681,5 +681,16 @@ def main():
         st.write(f"### Search Results for '{search_text}' ({len(filtered)})")
         st.dataframe(filtered)
 
+import pandas as pd
+
+def get_issues(db_conn):
+    query = "SELECT * FROM escalations"
+    try:
+        df = pd.read_sql_query(query, db_conn)
+        return df
+    except Exception as e:
+        st.error(f"Failed to fetch issues: {e}")
+        return pd.DataFrame()  # return empty df on failure
+
 if __name__ == "__main__":
     main()
