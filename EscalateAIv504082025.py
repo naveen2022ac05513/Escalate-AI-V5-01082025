@@ -802,6 +802,48 @@ if st.sidebar.button("🗑️ Reset Database (Dev Only)"):
     conn.close()
     st.sidebar.warning("Database reset. Please restart the app.")
 
+# ------------------------------
+# --- OTHER IMPROVEMENTS ---
+# ------------------------------
+tab1, tab2, tab3 = st.tabs(["📋 Escalations", "📊 Overview Metrics", "⚙️ Settings"])
+
+with tab1:
+    st.header("🔔 Escalation Feed")
+    # Include filter panel, SLA cards, progress bars
+
+with tab2:
+    st.header("📊 Dashboard Analytics")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Cases", total_cases)
+    col2.metric("Resolved", resolved_cases)
+    col3.metric("Avg Response Time", f"{avg_response_time:.1f} min")
+
+    st.markdown("### 🧠 Owner Performance")
+    st.dataframe(owner_perf)
+
+    # Optional: resolution rate chart using plotly or altair
+
+with tab3:
+    st.header("⚙️ App Settings")
+    # Include toggles, refresh button, SLA config, export logic
+def render_escalation_tab(df):
+    # SLA bars + filters
+
+def render_metrics_tab(df):
+    # Overview metrics + performance charts
+
+def render_settings_tab():
+    # Admin actions
+
+# Then in main app
+tab1, tab2, tab3 = st.tabs(["Escalations", "Metrics", "Settings"])
+with tab1:
+    render_escalation_tab(df)
+with tab2:
+    render_metrics_tab(df)
+with tab3:
+    render_settings_tab()
+    
 # -----------------------
 # --- NOTES -------------
 # -----------------------
