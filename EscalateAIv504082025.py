@@ -72,7 +72,8 @@ def get_next_escalation_id():
         conn.close()
         next_num = int(last[0].replace(ESCALATION_PREFIX, "")) + 1 if last else 1
         return f"{ESCALATION_PREFIX}{str(next_num).zfill(5)}"
-        def analyze_issue(issue):
+
+def analyze_issue(issue):
     score = analyzer.polarity_scores(issue)
     sentiment = "positive" if score["compound"] > 0.05 else "negative" if score["compound"] < -0.05 else "neutral"
     urgency = "high" if any(w in issue.lower() for kws in NEGATIVE_KEYWORDS.values() for w in kws) else "normal"
