@@ -379,7 +379,8 @@ def export_to_excel(df):
         writer.save()
     processed_data = output.getvalue()
     return processed_data
-    def create_tables():
+    
+def create_tables():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
