@@ -19,6 +19,15 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score
 import threading
 from dotenv import load_dotenv
 from twilio.rest import Client  # For WhatsApp
+import nltk
+nltk.download('vader_lexicon')
+
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
+sia = SentimentIntensityAnalyzer()
+score = sia.polarity_scores("This is great!")
+print(score)
+
 
 # Load environment variables
 load_dotenv()
