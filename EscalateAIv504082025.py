@@ -423,35 +423,13 @@ st.set_page_config(layout="wide")
 st.markdown(
     """
     <style>
-    /* Sticky header styling */
-    .sticky-header {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        background-color: white;
-        z-index: 1000;
-        padding: 18px 32px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        text-align: center;
-    }
-
-    /* Adjust margin for main container so content isn't hidden */
-    .block-container {
-        padding-top: 100px !important;
-    }
-
-    /* Responsive typography */
-    .sticky-header h1 {
-        margin: 0;
-        font-size: 26px;
-        font-weight: 600;
-        color: #333333;
-    }
+    /* Your CSS from above */
     </style>
-    <div class="sticky-header">
-        <h1>🚨 EscalateAI – Customer Escalation Management System</h1>
-    </div>
+    <header>
+        <div>
+            <h1 style="margin: 0; padding-left: 20px;">🚨 EscalateAI – Customer Escalation Management System</h1>
+        </div>
+    </header>
     """,
     unsafe_allow_html=True
 )
