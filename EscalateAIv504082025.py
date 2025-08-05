@@ -535,6 +535,13 @@ if selected_sentiment != "All":
     filtered_df = filtered_df[filtered_df["sentiment"] == selected_sentiment]
 if selected_category != "All":
     filtered_df = filtered_df[filtered_df["category"] == selected_category]
+
+view_mode = st.sidebar.radio("Escalation View", ["All", "Escalated", "Non-Escalated"])
+if view_mode == "Escalated":
+    filtered_df = filtered_df[filtered_df["escalated"] == "Yes"]
+elif view_mode == "Non-Escalated":
+    filtered_df = filtered_df[filtered_df["escalated"] != "Yes"]
+
 # --- Manual Notification Buttons ---
 st.sidebar.header("🔔 Manual Notifications")
 
@@ -558,7 +565,7 @@ tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
 with tabs[0]:
     st.subheader("📊 Escalation Kanban Board")
 
-    df = fetch_escalations()
+    df = filtered_df
     counts = df['status'].value_counts()
     open_count = counts.get('Open', 0)
     inprogress_count = counts.get('In Progress', 0)
@@ -595,7 +602,7 @@ with tabs[0]:
 # --- Escalated issues tab ---
 with tabs[1]:
     st.subheader("🚩 Escalated Issues")
-    df = fetch_escalations()
+    df = filtered_df
     df_esc = df[df["escalated"] == "Yes"]
     st.dataframe(df_esc)
 
