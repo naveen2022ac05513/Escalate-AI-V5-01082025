@@ -195,5 +195,5 @@ for status, col in zip(statuses, cols):
                         message = (
                             f"Hello {row['customer']},\n"
                             f"Your escalation [{row['id']}] has been resolved.\n"
-                            "We appreciate your patience and feedback."
+                            "We appreciate your patience and feedback.")
                        
