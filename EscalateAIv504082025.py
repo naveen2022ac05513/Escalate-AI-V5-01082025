@@ -624,20 +624,40 @@ with tabs[1]:
     df_esc = df[df["escalated"] == "Yes"]
     st.dataframe(df_esc)
 
-# --- Feedback and Retraining tab ---
 with tabs[2]:
     st.subheader("🔁 Feedback & Retraining")
     df = fetch_escalations()
     df_feedback = df[df["escalated"].notnull()]
+
     feedback_map = {"Correct": 1, "Incorrect": 0}
 
-    # Feedback form per escalation
     for i, row in df_feedback.iterrows():
-        feedback = st.selectbox(f"Is escalation for {row['id']} correct?", ["Correct", "Incorrect"], key=f"fb_{row['id']}")
-        if st.button(f"Submit Feedback for {row['id']}", key=f"fb_btn_{row['id']}"):
-            update_escalation_status(row['id'], row['status'], row.get('action_taken',''), row.get('owner',''), feedback_map[feedback])
-            st.success("Feedback saved.")
+        st.markdown(f"### Escalation ID: `{row['id']}`")
 
+        # Escalation accuracy feedback
+        feedback = st.selectbox(f"📝 Is escalation correct?", ["Correct", "Incorrect"], key=f"fb_{row['id']}")
+
+        # Sentiment correction
+        sentiment = st.selectbox("🎯 Sentiment Label", ["Positive", "Neutral", "Negative"], key=f"sent_{row['id']}")
+
+        # Criticality correction
+        criticality = st.selectbox("🚨 Criticality Level", ["Low", "Medium", "High", "Urgent"], key=f"crit_{row['id']}")
+
+        # Optional comments
+        comments = st.text_area("💬 Additional Notes", key=f"notes_{row['id']}")
+
+        if st.button(f"Submit Feedback for {row['id']}", key=f"fb_btn_{row['id']}"):
+            update_escalation_status(
+                row['id'],
+                row['status'],
+                row.get('action_taken', ''),
+                row.get('owner', ''),
+                feedback_map[feedback],
+                sentiment,
+                criticality,
+                comments
+            )
+            st.success("✅ Feedback saved and flagged for retraining.")
     # Retrain model button
     if st.button("🔁 Retrain Model"):
         st.info("Retraining model with feedback (may take a few seconds)...")
