@@ -700,6 +700,11 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                 
                 if colC.button("📣 Notify Manager", key=f"notify_mgr_{row['id']}"):
                     send_alert(f"Escalation #{row['id']} needs review", via="email", recipient="manager@company.com")
+                
+                new_status = st.selectbox("Move to:", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row["status"]))
+                if st.button("⏩ Move", key=f"move_{row['id']}"):
+                update_escalation_status(row['id'], new_status, row["action_taken"], row["owner"], row["owner_email"])
+                
                 st.markdown(f"**Issue:** {row['issue']}")
                 st.markdown(f"**Severity:** <span style='color:{header_color};font-weight:bold;'>{row['severity']}</span>", unsafe_allow_html=True)
                 st.markdown(f"**Criticality:** {row['criticality']}")
