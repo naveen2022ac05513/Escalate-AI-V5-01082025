@@ -7,13 +7,44 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
-# DB Config
+# Config
 DB_PATH = "your_database_path.db"
-STATUS_COLORS = {
-    "Open": "red", "In Progress": "orange", "Resolved": "green"
-}
+STATUS_COLORS = {"Open": "red", "In Progress": "orange", "Resolved": "green"}
 
-# Functions
+# Ensure schema exists
+def ensure_schema():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS escalations (
+            id TEXT PRIMARY KEY,
+            customer TEXT,
+            issue TEXT,
+            sentiment TEXT,
+            urgency TEXT,
+            severity TEXT,
+            criticality TEXT,
+            escalated TEXT,
+            status TEXT,
+            action_taken TEXT,
+            owner TEXT,
+            feedback_score INTEGER,
+            category TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+# Sample seeding (optional)
+def seed_data():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    sample = ("ESC001", "Acme Corp", "Cannot log in", "negative", "high", "medium", "critical", "Yes", "Open", "", "", None, "Authentication")
+    c.execute("INSERT OR IGNORE INTO escalations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", sample)
+    conn.commit()
+    conn.close()
+
+# Fetch data
 def fetch_escalations():
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql_query("SELECT * FROM escalations", conn)
@@ -23,17 +54,15 @@ def fetch_escalations():
 def update_escalation_status(id, status, action_taken, owner, feedback_score=None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""UPDATE escalations SET status=?, action_taken=?, owner=?, feedback_score=?
-                 WHERE id=?""", (status, action_taken, owner, feedback_score, id))
+    c.execute("""UPDATE escalations SET status=?, action_taken=?, owner=?, feedback_score=? WHERE id=?""",
+              (status, action_taken, owner, feedback_score, id))
     conn.commit()
     conn.close()
 
 def send_alert(message, via="email"):
-    # Placeholder: Hook for Teams or Email integration
     st.info(f"Alert sent via {via}: {message}")
 
 def send_whatsapp_message(phone, message):
-    # Placeholder for WhatsApp API call
     st.info(f"WhatsApp message to {phone}: {message}")
 
 def train_model():
@@ -68,7 +97,11 @@ def parse_feedback(feedback_text):
     elif "correct" in text or "appropriate" in text: return 1
     else: return None
 
-# App Config
+# Initialize schema & data
+ensure_schema()
+seed_data()
+
+# Streamlit UI
 st.set_page_config(layout="wide")
 st.title("🚨 EscalateAI 2.0 – Customer Escalation Platform")
 
@@ -82,7 +115,7 @@ if st.sidebar.button("📧 Send Manual Alert via Email"):
 # Main UI Tabs
 tabs = st.tabs(["📊 Dashboard", "🗃️ Kanban", "🚩 Escalated", "🔁 Feedback & Retrain", "🧪 Dev Panel"])
 
-# Dashboard Tab
+# Tab 1: Dashboard
 with tabs[0]:
     st.subheader("📊 Summary Dashboard")
     df = fetch_escalations()
@@ -93,7 +126,7 @@ with tabs[0]:
     st.bar_chart(df["urgency"].value_counts())
     st.bar_chart(df["severity"].value_counts())
 
-# Kanban Tab
+# Tab 2: Kanban Board
 with tabs[1]:
     st.subheader("🗃️ Escalation Kanban")
     statuses = ["Open", "In Progress", "Resolved"]
@@ -119,12 +152,12 @@ with tabs[1]:
                             send_whatsapp_message("whatsapp:+911234567890", f"Your escalation {row['id']} has been resolved.")
                         st.success("Saved successfully.")
 
-# Escalated Tab
+# Tab 3: Escalated Cases
 with tabs[2]:
     st.subheader("🚩 Escalated Issues")
     st.dataframe(df[df["escalated"] == "Yes"])
 
-# Feedback & Retrain Tab
+# Tab 4: Feedback & Retrain
 with tabs[3]:
     st.subheader("🔁 Feedback & Retraining")
     for _, row in df.iterrows():
@@ -142,7 +175,7 @@ with tabs[3]:
         else:
             st.warning("Model training failed.")
 
-# Dev Panel Tab
+# Tab 5: Dev Panel
 with tabs[4]:
     st.subheader("🧪 Developer Utilities")
     st.write("Raw Escalation Data")
