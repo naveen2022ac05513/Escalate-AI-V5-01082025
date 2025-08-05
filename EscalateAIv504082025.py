@@ -433,15 +433,49 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+
 import streamlit as st
 import datetime
 import pandas as pd
 
-# 🎨 Sidebar Title & Welcome
 st.sidebar.markdown("""
-    <div style="text-align:center;padding:10px 0;">
-        <h2 style="margin:0;">⚙️ EscalateAI Controls</h2>
-        <p style="font-size:14px;color:#666;">Manage, monitor, and act swiftly.</p>
+    <style>
+    .sidebar-title h2 {
+        font-size: 20px;
+        margin-bottom: 4px;
+        font-weight: 600;
+        color: #2c3e50;  /* Deep Slate */
+        text-align: center;
+    }
+    .sidebar-subtext {
+        font-size: 13px;
+        color: #7f8c8d;  /* Cool Gray */
+        text-align: center;
+        margin-bottom: 10px;
+    }
+    .sidebar-content {
+        background-color: #ecf0f1; /* Soft Light Gray */
+        padding: 10px;
+        border-radius: 8px;
+        box-shadow: 0px 2px 5px rgba(0,0,0,0.1);
+    }
+    .sidebar-content label, .sidebar-content select, .sidebar-content input {
+        font-size: 12px;
+        color: #34495e;
+    }
+    </style>
+    <div class="sidebar-title">
+        <h2>⚙️ EscalateAI Controls</h2>
+    </div>
+    <div class="sidebar-subtext">
+        Manage, monitor & respond with agility.
+    </div>
+    <div class="sidebar-content">
+        <!-- 👇 Place your Streamlit widgets here -->
+        <!-- Example:
+        st.selectbox("Choose escalation level", ["Low", "Medium", "High"])
+        -->
     </div>
 """, unsafe_allow_html=True)
 
