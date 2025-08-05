@@ -437,13 +437,17 @@ import streamlit as st
 import datetime
 import pandas as pd
 
-# ----- Sidebar Styling -----
-st.sidebar.markdown("## ⚙️ EscalateAI Controls")
-st.sidebar.markdown("---")
+# 🎨 Sidebar Title & Welcome
+st.sidebar.markdown("""
+    <div style="text-align:center;padding:10px 0;">
+        <h2 style="margin:0;">⚙️ EscalateAI Controls</h2>
+        <p style="font-size:14px;color:#666;">Manage, monitor, and act swiftly.</p>
+    </div>
+""", unsafe_allow_html=True)
 
 # 📥 Upload Section
-st.sidebar.subheader("📥 Upload & Ingest")
-uploaded_file = st.sidebar.file_uploader("Upload Excel (Customer complaints)", type=["xlsx"])
+st.sidebar.markdown("### 📥 Upload & Ingest")
+uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
 if uploaded_file:
     df_excel = pd.read_excel(uploaded_file)
     for _, row in df_excel.iterrows():
@@ -451,113 +455,109 @@ if uploaded_file:
         customer = str(row.get("customer", "Unknown"))
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
         insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
-    st.sidebar.success("✅ Complaints uploaded and processed.")
+    st.sidebar.success("✅ File processed successfully")
 
-# 📤 Download Buttons
-st.sidebar.subheader("📤 Download Reports")
-if st.sidebar.button("⬇️ All Complaints (CSV)"):
-    csv = fetch_escalations().to_csv(index=False)
-    st.sidebar.download_button("Download CSV", csv, file_name="escalations.csv", mime="text/csv")
+# 📤 Download Section
+st.sidebar.markdown("### 📤 Downloads")
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    if st.button("⬇️ All Complaints"):
+        csv = fetch_escalations().to_csv(index=False)
+        st.download_button("Download CSV", csv, file_name="escalations.csv", mime="text/csv")
+with col2:
+    if st.button("⬇️ Escalated Only"):
+        df_esc = fetch_escalations()
+        df_esc = df_esc[df_esc["escalated"] == "Yes"]
+        if df_esc.empty:
+            st.info("No escalated cases.")
+        else:
+            with pd.ExcelWriter("escalated_cases.xlsx") as writer:
+                df_esc.to_excel(writer, index=False)
+            with open("escalated_cases.xlsx", "rb") as f:
+                st.download_button("Download Excel", f, file_name="escalated_cases.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-if st.sidebar.button("⬇️ Escalated Cases (Excel)"):
-    df_esc = fetch_escalations()
-    df_esc = df_esc[df_esc["escalated"] == "Yes"]
-    if df_esc.empty:
-        st.sidebar.info("No escalated cases available.")
-    else:
-        with pd.ExcelWriter("escalated_cases.xlsx", engine='xlsxwriter') as writer:
-            df_esc.to_excel(writer, index=False)
-        with open("escalated_cases.xlsx", "rb") as file:
-            st.sidebar.download_button("Download Excel", file, file_name="escalated_cases.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# 📩 Email Parsing
-st.sidebar.subheader("📩 Email Integration")
-if st.sidebar.button("Fetch Emails (IMAP)"):
+# 📩 Email Fetching
+st.sidebar.markdown("### 📩 Email Integration")
+if st.sidebar.button("Fetch Emails"):
     emails = parse_emails(EMAIL_SERVER, EMAIL_USER, EMAIL_PASS)
     for e in emails:
         issue, customer = e["issue"], e["customer"]
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
         insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
-    st.sidebar.success(f"✅ Processed {len(emails)} new emails.")
+    st.sidebar.success(f"✅ {len(emails)} emails processed")
 
-# ⏰ SLA Alerts
-st.sidebar.subheader("⏰ SLA Monitoring")
-if st.sidebar.button("📣 Trigger SLA Alert"):
+# ⏰ SLA Monitoring
+st.sidebar.markdown("### ⏰ SLA Monitor")
+if st.sidebar.button("Trigger SLA Check"):
     df = fetch_escalations()
     df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
     breaches = df[(df['status'] != 'Resolved') & (df['priority'] == 'high') &
                   ((datetime.datetime.now() - df['timestamp']) > datetime.timedelta(minutes=10))]
     if not breaches.empty:
-        alert_msg = f"🚨 SLA breach detected for {len(breaches)} case(s)!"
+        alert_msg = f"🚨 SLA breach for {len(breaches)} case(s)!"
         send_alert(alert_msg, via="teams")
         send_alert(alert_msg, via="email")
-        st.sidebar.success("✅ Alert sent.")
+        st.sidebar.success("✅ Alerts sent")
     else:
-        st.sidebar.info("No SLA breaches found.")
+        st.sidebar.info("All SLAs healthy")
 
-# 🚨 Real-time SLA warning banner
+# 🚨 SLA Banner
 df_all = fetch_escalations()
 df_all['timestamp'] = pd.to_datetime(df_all['timestamp'], errors='coerce')
 breaches = df_all[(df_all['status'] != 'Resolved') & (df_all['priority'] == 'high') &
                   ((datetime.datetime.now() - df_all['timestamp']) > datetime.timedelta(minutes=10))]
 if not breaches.empty:
     st.sidebar.markdown(
-        f"<div style='background-color:#dc3545;color:white;padding:10px;border-radius:6px;margin-top:10px;text-align:center;'>"
-        f"<strong>🚨 {len(breaches)} SLA breach(s) detected!</strong></div>",
+        f"<div style='background:#dc3545;padding:8px;border-radius:5px;color:white;text-align:center;'>"
+        f"<strong>🚨 {len(breaches)} SLA Breach(s) Detected</strong></div>",
         unsafe_allow_html=True
     )
 
-# 🔍 Filtering Controls
-st.sidebar.subheader("🔍 Filter Escalations")
+# 🔍 Filters
+st.sidebar.markdown("### 🔍 Escalation Filters")
 df = fetch_escalations()
-status_options = ["All"] + sorted(df["status"].dropna().unique().tolist())
-severity_options = ["All"] + sorted(df["severity"].dropna().unique().tolist())
-sentiment_options = ["All"] + sorted(df["sentiment"].dropna().unique().tolist())
-category_options = ["All"] + sorted(df["category"].dropna().unique().tolist())
-
-selected_status = st.sidebar.selectbox("Status", status_options)
-selected_severity = st.sidebar.selectbox("Severity", severity_options)
-selected_sentiment = st.sidebar.selectbox("Sentiment", sentiment_options)
-selected_category = st.sidebar.selectbox("Category", category_options)
-view_mode = st.sidebar.radio("Escalation View", ["All", "Escalated", "Non-Escalated"])
+status = st.sidebar.selectbox("Status", ["All"] + sorted(df["status"].dropna().unique()))
+severity = st.sidebar.selectbox("Severity", ["All"] + sorted(df["severity"].dropna().unique()))
+sentiment = st.sidebar.selectbox("Sentiment", ["All"] + sorted(df["sentiment"].dropna().unique()))
+category = st.sidebar.selectbox("Category", ["All"] + sorted(df["category"].dropna().unique()))
+view = st.sidebar.radio("Escalation View", ["All", "Escalated", "Non-Escalated"])
 
 filtered_df = df.copy()
-if selected_status != "All":
-    filtered_df = filtered_df[filtered_df["status"] == selected_status]
-if selected_severity != "All":
-    filtered_df = filtered_df[filtered_df["severity"] == selected_severity]
-if selected_sentiment != "All":
-    filtered_df = filtered_df[filtered_df["sentiment"] == selected_sentiment]
-if selected_category != "All":
-    filtered_df = filtered_df[filtered_df["category"] == selected_category]
-if view_mode == "Escalated":
+if status != "All":
+    filtered_df = filtered_df[filtered_df["status"] == status]
+if severity != "All":
+    filtered_df = filtered_df[filtered_df["severity"] == severity]
+if sentiment != "All":
+    filtered_df = filtered_df[filtered_df["sentiment"] == sentiment]
+if category != "All":
+    filtered_df = filtered_df[filtered_df["category"] == category]
+if view == "Escalated":
     filtered_df = filtered_df[filtered_df["escalated"] == "Yes"]
-elif view_mode == "Non-Escalated":
+elif view == "Non-Escalated":
     filtered_df = filtered_df[filtered_df["escalated"] != "Yes"]
 
-# 🔔 Manual Notifications
-st.sidebar.subheader("🔔 Manual Notifications")
-alert_message = st.sidebar.text_area("Notification Message", "🚨 Test alert from EscalateAI")
+# 🔔 Manual Alerts
+st.sidebar.markdown("### 🔔 Manual Notifications")
+msg = st.sidebar.text_area("Compose Alert", "🚨 Test alert from EscalateAI")
+if st.sidebar.button("Send MS Teams"):
+    send_alert(msg, via="teams")
+    st.sidebar.success("✅ MS Teams alert sent")
+if st.sidebar.button("Send Email"):
+    send_alert(msg, via="email")
+    st.sidebar.success("✅ Email alert sent")
 
-if st.sidebar.button("📤 Send MS Teams Alert"):
-    send_alert(alert_message, via="teams")
-    st.sidebar.success("✅ MS Teams alert sent.")
-
-if st.sidebar.button("📧 Send Email Alert"):
-    send_alert(alert_message, via="email")
-    st.sidebar.success("✅ Email alert sent.")
-
-# 📲 WhatsApp Alerts
-st.sidebar.subheader("📲 WhatsApp Notification")
-case_status = st.sidebar.selectbox("Case Status", ["Open", "In Progress", "Resolved"])
-if case_status == "Resolved":
+# 📲 WhatsApp Notification
+st.sidebar.markdown("### 📲 WhatsApp Alerts")
+status_check = st.sidebar.selectbox("Case Status", ["Open", "In Progress", "Resolved"])
+if status_check == "Resolved":
     phone = st.sidebar.text_input("Phone Number", "+91")
-    message = st.sidebar.text_area("Message", "Your issue has been resolved. Thank you!")
+    msg = st.sidebar.text_area("Message", "Your issue has been resolved.")
     if st.sidebar.button("Send WhatsApp"):
-        # send_whatsapp_message(phone, message)
-        st.sidebar.success(f"✅ WhatsApp message sent to {phone}")
+        # send_whatsapp_message(phone, msg)
+        st.sidebar.success(f"✅ WhatsApp sent to {phone}")
 else:
-    st.sidebar.info("⚠️ Available only for 'Resolved' cases.")
+    st.sidebar.info("Available only for 'Resolved' cases.")
+
 # --- Main Tabs ---
 tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
 
