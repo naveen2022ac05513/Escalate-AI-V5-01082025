@@ -688,6 +688,18 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
             urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
             expander_label = f"{row['id']} - {row['customer']} {flag}"
             with st.expander(expander_label, expanded=False):
+                colA, colB, colC = st.columns(3)
+                    if colA.button("✔️ Mark as Resolved", key=f"resolved_{row['id']}"):
+                        update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], row["owner_email"])
+                        send_alert("Case marked as resolved.", via="email", recipient=row["owner_email"])
+                        send_alert("Case marked as resolved.", via="teams", recipient=row["owner_email"])
+                    
+                    if colB.button("🚀 Escalate to Tier 2", key=f"tier2_{row['id']}"):
+                        escalate_to_tier_2(row["id"])  # optional extra logic
+                        send_alert("Case escalated to Tier 2.", via="teams", recipient="tier2@company.com")
+                    
+                    if colC.button("📣 Notify Manager", key=f"notify_mgr_{row['id']}"):
+                        send_alert(f"Escalation #{row['id']} needs review", via="email", recipient="manager@company.com")
                 st.markdown(f"**Issue:** {row['issue']}")
                 st.markdown(f"**Severity:** <span style='color:{header_color};font-weight:bold;'>{row['severity']}</span>", unsafe_allow_html=True)
                 st.markdown(f"**Criticality:** {row['criticality']}")
