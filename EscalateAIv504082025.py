@@ -347,26 +347,24 @@ import requests
 import streamlit as st
 from email.mime.text import MIMEText
 
-# 🔐 Load .env configuration
+# ✅ Load environment variables
 load_dotenv()
 
-SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_EMAIL = os.getenv("SMTP_EMAIL")
-SMTP_PASS = os.getenv("SMTP_PASS")
-ALERT_RECIPIENT = os.getenv("ALERT_RECIPIENT")
-TEAMS_WEBHOOK = os.getenv("TEAMS_WEBHOOK")
-EMAIL_SUBJECT = os.getenv("EMAIL_SUBJECT", "EscalateAI Alert")
+SMTP_EMAIL = os.getenv("EMAIL_USER")
+SMTP_PASS = os.getenv("EMAIL_PASS") or ""  # Handles blank password
+SMTP_SERVER = os.getenv("EMAIL_SMTP_SERVER")
+SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
+ALERT_RECIPIENT = os.getenv("EMAIL_RECEIVER")
+TEAMS_WEBHOOK = os.getenv("MS_TEAMS_WEBHOOK_URL")
+EMAIL_SUBJECT = os.getenv("EMAIL_SUBJECT", "🚨 EscalateAI Alert")
 
 def send_alert(message, via="email"):
     """
-    Send an alert message via email or Microsoft Teams webhook.
-    Uses .env config and handles encoding errors gracefully.
-    Displays Streamlit error if failed.
+    Send alert via email or Microsoft Teams webhook using environment variables.
+    Properly encodes Unicode and handles errors gracefully.
     """
     if via == "email":
         try:
-            # ✉️ MIME email with UTF-8 support
             msg = MIMEText(message, 'plain', 'utf-8')
             msg['Subject'] = EMAIL_SUBJECT
             msg['From'] = SMTP_EMAIL
@@ -380,11 +378,11 @@ def send_alert(message, via="email"):
             st.error(f"Email alert failed: {e}")
     elif via == "teams":
         try:
-            # 💬 Post alert to Teams channel
-            headers = {"Content-Type": "application/json"}
-            payload = {"text": message}
-            response = requests.post(TEAMS_WEBHOOK, json=payload, headers=headers)
-
+            response = requests.post(
+                TEAMS_WEBHOOK,
+                json={"text": message},
+                headers={"Content-Type": "application/json"}
+            )
             if response.status_code != 200:
                 st.error(f"Teams alert failed: {response.status_code} - {response.text}")
         except Exception as e:
