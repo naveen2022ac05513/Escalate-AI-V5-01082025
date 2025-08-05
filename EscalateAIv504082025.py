@@ -558,20 +558,6 @@ if st.sidebar.button("📧 Send Email Alert"):
     st.sidebar.success("Email alert sent.")
 import streamlit as st
 
-st.sidebar.title("📲 WhatsApp Alert")
-
-# Phone number input
-phone = st.sidebar.text_input("Phone Number", "+91")
-
-# Message input
-message = st.sidebar.text_area("Message", "Escalation detected. Please respond.")
-
-# Send button
-if st.sidebar.button("Send"):
-    st.success(f"Message sent to {phone}")
-    # You can call your actual notification logic here
-    # send_whatsapp_message(phone, message)
-
 # --- Main Tabs ---
 tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
 
