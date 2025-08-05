@@ -379,6 +379,43 @@ def export_to_excel(df):
         writer.save()
     processed_data = output.getvalue()
     return processed_data
+    def create_tables():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS escalations (
+        id TEXT PRIMARY KEY,
+        source TEXT,
+        timestamp TEXT,
+        customer_email TEXT,
+        subject TEXT,
+        body TEXT,
+        sentiment REAL,
+        urgency TEXT,
+        escalation_flag INTEGER,
+        severity TEXT,
+        criticality TEXT,
+        category TEXT,
+        status TEXT,
+        action_taken TEXT,
+        action_owner TEXT,
+        last_updated TEXT
+    )
+    """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        escalation_id TEXT,
+        action TEXT,
+        details TEXT,
+        timestamp TEXT
+    )
+    """)
+    conn.commit()
+    conn.close()
+def main():
+    create_tables()
+    # rest of your main() code
 
 # Streamlit UI
 def main():
