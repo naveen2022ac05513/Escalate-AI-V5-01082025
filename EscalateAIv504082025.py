@@ -831,7 +831,18 @@ def render_escalation_tab(df):
     # SLA bars + filters
 
 def render_metrics_tab(df):
-    # Overview metrics + performance charts
+    st.header("📊 Dashboard Analytics")
+
+    total_cases = len(df)
+    resolved_cases = len(df[df['status'] == 'Resolved'])
+    avg_response_time = df['response_time'].mean()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Cases", total_cases)
+    col2.metric("Resolved", resolved_cases)
+    col3.metric("Avg Response Time", f"{avg_response_time:.1f} min")
+
+    # You can also drop in more metrics or visualizations here
 
 def render_settings_tab():
     # Admin actions
