@@ -827,13 +827,13 @@ with tab3:
     st.header("⚙️ App Settings")
     # Include toggles, refresh button, SLA config, export logic
 
-    def render_escalation_tab(df):
+def render_escalation_tab(df):
     # SLA bars + filters
 
-    def render_metrics_tab(df):
+def render_metrics_tab(df):
     # Overview metrics + performance charts
 
-    def render_settings_tab():
+def render_settings_tab():
     # Admin actions
 
 # Then in main app
