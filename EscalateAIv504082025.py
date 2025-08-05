@@ -826,23 +826,24 @@ with tab2:
 with tab3:
     st.header("⚙️ App Settings")
     # Include toggles, refresh button, SLA config, export logic
-def render_escalation_tab(df):
+
+    def render_escalation_tab(df):
     # SLA bars + filters
 
-def render_metrics_tab(df):
+    def render_metrics_tab(df):
     # Overview metrics + performance charts
 
-def render_settings_tab():
+    def render_settings_tab():
     # Admin actions
 
 # Then in main app
-tab1, tab2, tab3 = st.tabs(["Escalations", "Metrics", "Settings"])
-with tab1:
-    render_escalation_tab(df)
-with tab2:
-    render_metrics_tab(df)
-with tab3:
-    render_settings_tab()
+    tab1, tab2, tab3 = st.tabs(["Escalations", "Metrics", "Settings"])
+    with tab1:
+        render_escalation_tab(df)
+    with tab2:
+        render_metrics_tab(df)
+    with tab3:
+        render_settings_tab()
     
 # -----------------------
 # --- NOTES -------------
