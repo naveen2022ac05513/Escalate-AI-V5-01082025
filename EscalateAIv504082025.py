@@ -558,6 +558,24 @@ if st.sidebar.button("📧 Send Email Alert"):
     st.sidebar.success("Email alert sent.")
 import streamlit as st
 
+import streamlit as st
+
+st.sidebar.title("📲 WhatsApp Alert")
+
+# Example case status selector
+case_status = st.sidebar.selectbox("Case Status", ["Open", "In Progress", "Resolved"])
+
+if case_status == "Resolved":
+    phone = st.sidebar.text_input("Phone Number", "+91")
+    message = st.sidebar.text_area("Message", "Your issue has been resolved. Thank you!")
+
+    if st.sidebar.button("Send"):
+        st.success(f"Notification sent to {phone}")
+        # Your actual WhatsApp trigger code can go here
+        # send_whatsapp_message(phone, message)
+else:
+    st.sidebar.info("Notification is available only for 'Resolved' cases.")
+
 # --- Main Tabs ---
 tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
 
