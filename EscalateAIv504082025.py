@@ -390,8 +390,15 @@ def main():
     with tabs[3]:
         st.header("Feedback & Retraining")
         # Select issue for feedback
-        issue_ids = all_issues['id'].tolist() if not all_issues.empty else []
-        selected_issue_id = st.selectbox("Select Issue ID for Feedback", options=["
+        #issue_ids = all_issues['id'].tolist() if not all_issues.empty else []
+        $selected_issue_id = st.selectbox("Select Issue ID for Feedback", options=["
+        selected_issue_id = st.selectbox("Select Issue ID for Feedback", options=[
+            "SESICE-2500001",
+            "SESICE-2500002",
+            "SESICE-2500003"
+        ])
+
+                                                                                  
 # ========== CONTINUED: Kanban Board UI and Editing ==========
 
 def update_issue_status(db_conn, issue_id, new_status):
