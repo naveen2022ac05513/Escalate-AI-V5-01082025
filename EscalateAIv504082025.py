@@ -423,27 +423,37 @@ st.set_page_config(layout="wide")
 st.markdown(
 """
 <style>
+/* Sticky header styling */
 header {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
-  z-index: 999;
   background-color: white;
-  padding: 10px 20px;
-  box-shadow: 0px 2px 8px rgba(0,0,0,0.1);
+  z-index: 1000;
+  padding: 16px 24px;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.08);
+  text-align: center;
 }
-body {
-  margin-top: 80px;  /* Give space below the fixed header */
+
+h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: #333333;
+}
+
+/* Add space below the header so content doesn't overlap */
+body, .main, .block-container {
+  margin-top: 80px !important;
 }
 </style>
 <header>
-  <h1 style="margin: 0;">🚨 EscalateAI – Customer Escalation Management System</h1>
+  <h1>🚨 EscalateAI – Customer Escalation Management System</h1>
 </header>
 """,
 unsafe_allow_html=True
 )
-
 # Sidebar controls
 st.sidebar.header("⚙️ Controls")
 
