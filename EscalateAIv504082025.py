@@ -340,27 +340,55 @@ def predict_escalation(model, sentiment, urgency, severity, criticality):
 # --- ALERTING ------
 # -------------------
 
+from dotenv import load_dotenv
+import os
+import smtplib
+import requests
+import streamlit as st
+from email.mime.text import MIMEText
+
+# 🔐 Load .env configuration
+load_dotenv()
+
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_EMAIL = os.getenv("SMTP_EMAIL")
+SMTP_PASS = os.getenv("SMTP_PASS")
+ALERT_RECIPIENT = os.getenv("ALERT_RECIPIENT")
+TEAMS_WEBHOOK = os.getenv("TEAMS_WEBHOOK")
+EMAIL_SUBJECT = os.getenv("EMAIL_SUBJECT", "EscalateAI Alert")
+
 def send_alert(message, via="email"):
     """
-    Send an alert message either via email or Microsoft Teams webhook.
-    Handles errors and displays them in Streamlit UI.
+    Send an alert message via email or Microsoft Teams webhook.
+    Uses .env config and handles encoding errors gracefully.
+    Displays Streamlit error if failed.
     """
     if via == "email":
         try:
+            # ✉️ MIME email with UTF-8 support
+            msg = MIMEText(message, 'plain', 'utf-8')
+            msg['Subject'] = EMAIL_SUBJECT
+            msg['From'] = SMTP_EMAIL
+            msg['To'] = ALERT_RECIPIENT
+
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
                 server.starttls()
                 server.login(SMTP_EMAIL, SMTP_PASS)
-                # Send plain text email to alert recipient
-                server.sendmail(SMTP_EMAIL, ALERT_RECIPIENT, message)
+                server.sendmail(SMTP_EMAIL, ALERT_RECIPIENT, msg.as_string())
         except Exception as e:
             st.error(f"Email alert failed: {e}")
     elif via == "teams":
         try:
-            # Post JSON payload with alert text to MS Teams webhook URL
-            requests.post(TEAMS_WEBHOOK, json={"text": message})
+            # 💬 Post alert to Teams channel
+            headers = {"Content-Type": "application/json"}
+            payload = {"text": message}
+            response = requests.post(TEAMS_WEBHOOK, json=payload, headers=headers)
+
+            if response.status_code != 200:
+                st.error(f"Teams alert failed: {response.status_code} - {response.text}")
         except Exception as e:
             st.error(f"Teams alert failed: {e}")
-
 
 # ------------------------------
 # --- BACKGROUND EMAIL POLLING -
