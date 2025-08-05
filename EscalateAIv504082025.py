@@ -507,6 +507,34 @@ if not breaches.empty:
         f"🚨 SLA breach detected for {len(breaches)} case(s)!"
         f"</div>", unsafe_allow_html=True
     )
+# --- Sidebar Filters ---
+st.sidebar.header("🔍 Filter Escalations")
+
+# Load full escalation data
+df_all = fetch_escalations()
+
+# Get unique values for filter options
+status_options = ["All"] + sorted(df_all["status"].dropna().unique().tolist())
+severity_options = ["All"] + sorted(df_all["severity"].dropna().unique().tolist())
+sentiment_options = ["All"] + sorted(df_all["sentiment"].dropna().unique().tolist())
+category_options = ["All"] + sorted(df_all["category"].dropna().unique().tolist())
+
+# Filter widgets
+selected_status = st.sidebar.selectbox("Filter by Status", status_options)
+selected_severity = st.sidebar.selectbox("Filter by Severity", severity_options)
+selected_sentiment = st.sidebar.selectbox("Filter by Sentiment", sentiment_options)
+selected_category = st.sidebar.selectbox("Filter by Category", category_options)
+
+# Apply filters
+filtered_df = df_all.copy()
+if selected_status != "All":
+    filtered_df = filtered_df[filtered_df["status"] == selected_status]
+if selected_severity != "All":
+    filtered_df = filtered_df[filtered_df["severity"] == selected_severity]
+if selected_sentiment != "All":
+    filtered_df = filtered_df[filtered_df["sentiment"] == selected_sentiment]
+if selected_category != "All":
+    filtered_df = filtered_df[filtered_df["category"] == selected_category]
 # --- Manual Notification Buttons ---
 st.sidebar.header("🔔 Manual Notifications")
 
