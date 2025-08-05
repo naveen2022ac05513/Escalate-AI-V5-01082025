@@ -32,6 +32,7 @@ ALERT_RECIPIENT = os.getenv("EMAIL_RECEIVER")
 TEAMS_WEBHOOK = os.getenv("MS_TEAMS_WEBHOOK_URL")
 DB_PATH = "escalations.db"
 ESCALATION_PREFIX = "SESICE-25"
+
 analyzer = SentimentIntensityAnalyzer()
 processed_email_uids = set()
 processed_email_uids_lock = threading.Lock()
