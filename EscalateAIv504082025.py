@@ -98,23 +98,49 @@ def init_db():
     ''')
     conn.commit()
     return conn
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
-# --- Sentiment analyzer setup ---
-sia = SentimentIntensityAnalyzer()
+# Initialize once globally
+sid = SentimentIntensityAnalyzer()
 
-# --- Negative words list (expanded as per your categories) ---
-NEGATIVE_WORDS = {
-    # Technical Failures & Product Malfunction
+# Define your custom escalation-related keywords
+negative_keywords = [
+    # Technical Failures
     "fail", "break", "crash", "defect", "fault", "degrade", "damage", "trip", "malfunction", "blank", "shutdown", "discharge",
-    # Customer Dissatisfaction & Escalations
+    # Customer Dissatisfaction
     "dissatisfy", "frustrate", "complain", "reject", "delay", "ignore", "escalate", "displease", "noncompliance", "neglect",
-    # Support Gaps & Operational Delays
+    # Support Gaps
     "wait", "pending", "slow", "incomplete", "miss", "omit", "unresolved", "shortage", "no response",
-    # Hazardous Conditions & Safety Risks
+    # Safety Risks
     "fire", "burn", "flashover", "arc", "explode", "unsafe", "leak", "corrode", "alarm", "incident",
-    # Business Risk & Impact
+    # Business Impact
     "impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"
-}
+]
+
+def analyze_text(text):
+    """
+    Analyze text for sentiment and escalation keywords.
+    Returns: (sentiment: str, escalation_flag: bool)
+    """
+    if not isinstance(text, str):
+        return "neutral", False
+
+    sentiment_scores = sid.polarity_scores(text)
+    compound = sentiment_scores['compound']
+
+    # Classify sentiment
+    if compound >= 0.05:
+        sentiment = "positive"
+    elif compound <= -0.05:
+        sentiment = "negative"
+    else:
+        sentiment = "neutral"
+
+    # Check for escalation keywords
+    lower_text = text.lower()
+    escalation_flag = any(keyword in lower_text for keyword in negative_keywords)
+
+    return sentiment, escalation_flag
 
 # --- Utility functions ---
 
