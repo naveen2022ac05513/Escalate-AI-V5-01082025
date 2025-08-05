@@ -628,36 +628,18 @@ with tabs[2]:
     st.subheader("🔁 Feedback & Retraining")
     df = fetch_escalations()
     df_feedback = df[df["escalated"].notnull()]
+    fb_map = {"Correct": 1, "Incorrect": 0}
 
-    feedback_map = {"Correct": 1, "Incorrect": 0}
-
-    for i, row in df_feedback.iterrows():
-        st.markdown(f"### Escalation ID: `{row['id']}`")
-
-        # Escalation accuracy feedback
-        feedback = st.selectbox(f"📝 Is escalation correct?", ["Correct", "Incorrect"], key=f"fb_{row['id']}")
-
-        # Sentiment correction
-        sentiment = st.selectbox("🎯 Sentiment Label", ["Positive", "Neutral", "Negative"], key=f"sent_{row['id']}")
-
-        # Criticality correction
-        criticality = st.selectbox("🚨 Criticality Level", ["Low", "Medium", "High", "Urgent"], key=f"crit_{row['id']}")
-
-        # Optional comments
-        comments = st.text_area("💬 Additional Notes", key=f"notes_{row['id']}")
-
-        if st.button(f"Submit Feedback for {row['id']}", key=f"fb_btn_{row['id']}"):
-            update_escalation_status(
-                row['id'],
-                row['status'],
-                row.get('action_taken', ''),
-                row.get('owner', ''),
-                feedback_map[feedback],
-                sentiment,
-                criticality,
-                comments
-            )
-            st.success("✅ Feedback saved and flagged for retraining.")
+    for _, row in df_feedback.iterrows():
+        with st.expander(f"🆔 {row['id']}"):
+            fb = st.selectbox("Escalation Accuracy", ["Correct", "Incorrect"], key=f"fb_{row['id']}")
+            sent = st.selectbox("Sentiment", ["Positive", "Neutral", "Negative"], key=f"sent_{row['id']}")
+            crit = st.selectbox("Criticality", ["Low", "Medium", "High", "Urgent"], key=f"crit_{row['id']}")
+            notes = st.text_area("Notes", key=f"note_{row['id']}")
+            if st.button("Submit", key=f"btn_{row['id']}"):
+                update_escalation_status(row['id'], row['status'], row.get('action_taken',''), row.get('owner',''), fb_map[fb], sent, crit, notes)
+                st.success("Feedback saved.")
+    
     # Retrain model button
     if st.button("🔁 Retrain Model"):
         st.info("Retraining model with feedback (may take a few seconds)...")
