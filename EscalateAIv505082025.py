@@ -749,9 +749,11 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
             #ageing_value = row.get("ageing", "00:00")
             #expander_label = f"{row['id']} - {row['customer']} {flag} – {summary} ⏳ {ageing_value}"
             #expander_label = f"{row['id']} - {row['customer']} {flag}"
+            
             for _, row in filtered_df.iterrows():
-            ageing_value = row["ageing"]
-            expander_label = f"{row['id']} - {row['customer']} {row.get('flag', '')} – {row.get('summary', '')} ⏳ {ageing_value}"
+                ageing_value = row["ageing"]
+                expander_label = f"{row['id']} - {row['customer']} {row.get('flag', '')} – {row.get('summary', '')} ⏳ {ageing_value}"
+            
             # ...render your expander with expander_label
 
             
