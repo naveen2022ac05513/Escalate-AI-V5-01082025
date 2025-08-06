@@ -193,13 +193,16 @@ def fetch_escalations():
         conn.close()
     return df
 
+from datetime import datetime
+
+now = datetime.now()
+
 df["timestamp"] = pd.to_datetime(df["timestamp"], errors='coerce')
 
 df["ageing"] = df["timestamp"].apply(
-    lambda ts: f"{int((datetime.datetime.now() - ts).total_seconds() // 3600):02}:{int(((datetime.datetime.now() - ts).total_seconds() % 3600) // 60):02}"
+    lambda ts: f"{int((now - ts).total_seconds() // 3600):02}:{int(((now - ts).total_seconds() % 3600) // 60):02}"
     if pd.notnull(ts) else "00:00"
 )
-
 
 def update_escalation_status(esc_id, status, action_taken, action_owner, feedback=None):
     """
