@@ -65,14 +65,11 @@ processed_email_uids_lock = threading.Lock()  # Ensure thread-safe access to pro
 
 def summarize_issue_text(issue_text):
     """
-    Generates a concise summary of the issue for UI display.
-    Extracts keywords, trims verbosity, and limits length.
+    Generate a concise issue summary for the Kanban board.
+    Trims verbosity and keeps it within ~120 chars.
     """
-    # Basic cleanup and keyword extraction (can be expanded using NLP)
     clean_text = re.sub(r'\s+', ' ', issue_text).strip()
-    # Prioritize subject line if available (e.g., for emails)
-    summary = clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
-    return summary
+    return clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
     
 def get_next_escalation_id():
     """
@@ -200,9 +197,8 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 
 def parse_emails(imap_server, email_user, email_pass):
     """
-    Connect to the IMAP email server, fetch unseen emails from the inbox,
-    extract customer email and issue text (subject + body snippet).
-    Returns a list of dicts with 'customer' and 'issue' keys.
+    Connects to the IMAP server, fetches unseen emails,
+    and returns a list of concise issue summaries.
     """
     try:
         conn = imaplib.IMAP4_SSL(imap_server)
@@ -210,40 +206,39 @@ def parse_emails(imap_server, email_user, email_pass):
         conn.select("inbox")
         _, messages = conn.search(None, "UNSEEN")
         emails = []
+
         for num in messages[0].split():
             _, msg_data = conn.fetch(num, "(RFC822)")
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
-                    # Decode email subject properly
+
                     subject = decode_header(msg["Subject"])[0][0]
                     if isinstance(subject, bytes):
                         subject = subject.decode(errors='ignore')
                     from_ = msg.get("From")
+
                     body = ""
                     if msg.is_multipart():
-                        # Iterate over parts to find plain text body
                         for part in msg.walk():
                             if part.get_content_type() == "text/plain":
                                 body = part.get_payload(decode=True).decode(errors='ignore')
                                 break
                     else:
                         body = msg.get_payload(decode=True).decode(errors='ignore')
+
+                    full_issue = f"{subject} - {body[:200]}"
+                    summary = summarize_issue_text(full_issue)
+
                     emails.append({
                         "customer": from_,
-                        #"issue": f"{subject} - {body[:200]}"  # Truncate body snippet for brevity
-                       full_issue = f"{subject} - {body[:200]}"
-                       summary = summarize_issue_text(full_issue)
-                       emails.append({
-                            "customer": from_,
-                            "issue": summary
-                        })
+                        "issue": summary
+                    })
         conn.logout()
         return emails
     except Exception as e:
         st.error(f"Failed to parse emails: {e}")
         return []
-
 
 # -----------------------
 # --- NLP & Tagging ---
