@@ -63,6 +63,17 @@ processed_email_uids_lock = threading.Lock()  # Ensure thread-safe access to pro
 # --- Helper Functions
 # ---------------------
 
+def summarize_issue_text(issue_text):
+    """
+    Generates a concise summary of the issue for UI display.
+    Extracts keywords, trims verbosity, and limits length.
+    """
+    # Basic cleanup and keyword extraction (can be expanded using NLP)
+    clean_text = re.sub(r'\s+', ' ', issue_text).strip()
+    # Prioritize subject line if available (e.g., for emails)
+    summary = clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
+    return summary
+    
 def get_next_escalation_id():
     """
     Generate a sequential escalation ID in the format SESICE-25XXXXX
@@ -220,7 +231,10 @@ def parse_emails(imap_server, email_user, email_pass):
                         body = msg.get_payload(decode=True).decode(errors='ignore')
                     emails.append({
                         "customer": from_,
-                        "issue": f"{subject} - {body[:200]}"  # Truncate body snippet for brevity
+                        #"issue": f"{subject} - {body[:200]}"  # Truncate body snippet for brevity
+                        full_issue = f"{subject} - {body[:200]}"
+                        summary = summarize_issue_text(full_issue)
+                        "issue": summary
                     })
         conn.logout()
         return emails
@@ -512,10 +526,11 @@ uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
 if uploaded_file:
     df_excel = pd.read_excel(uploaded_file)
     for _, row in df_excel.iterrows():
-        issue = str(row.get("issue", ""))
+        issue_summary = summarize_issue_text(issue)
         customer = str(row.get("customer", "Unknown"))
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
-        insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
+        #insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
+        insert_escalation(customer, issue_summary, sentiment, urgency, severity, criticality, category, escalation_flag)
     st.sidebar.success("✅ File processed successfully")
 
 # 📤 Download Section
@@ -686,7 +701,9 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
             flag = "🚩" if row['escalated'] == 'Yes' else ""
             header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
             urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
-            expander_label = f"{row['id']} - {row['customer']} {flag}"
+            summary = summarize_issue_text(row['issue'])
+            expander_label = f"{row['id']} - {row['customer']} {flag} – {summary}"
+            #expander_label = f"{row['id']} - {row['customer']} {flag}"
             
             with st.expander(expander_label, expanded=False):
                 colA, colB, colC = st.columns(3)
