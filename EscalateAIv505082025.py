@@ -73,7 +73,16 @@ def summarize_issue_text(issue_text):
     """
     clean_text = re.sub(r'\s+', ' ', issue_text).strip()
     return clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
-    
+from datetime import datetime
+
+def render_kanban(filtered_df):
+    # Recalculate ageing dynamically
+    now = datetime.now()
+    filtered_df["ageing"] = filtered_df["timestamp"].apply(
+        lambda ts: f"{int((now - ts).total_seconds() // 3600):02}:{int(((now - ts).total_seconds() % 3600) // 60):02}"
+        if pd.notnull(ts) else "00:00"
+    )
+
 def get_next_escalation_id():
     """
     Generate a sequential escalation ID in the format SESICE-25XXXXX
@@ -646,15 +655,6 @@ if view == "Escalated":
 elif view == "Non-Escalated":
     filtered_df = filtered_df[filtered_df["escalated"] != "Yes"]
 
-from datetime import datetime
-
-df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-
-now = datetime.now()
-df['ageing'] = df['timestamp'].apply(
-    lambda ts: f"{int((now - ts).total_seconds() // 3600):02}:{int(((now - ts).total_seconds() % 3600) // 60):02}"
-    if pd.notnull(ts) else "00:00"
-)
 
 # 🔔 Manual Alerts
 st.sidebar.markdown("### 🔔 Manual Notifications")
@@ -746,9 +746,14 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
             header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
             urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
             summary = summarize_issue_text(row['issue'])
-            ageing_value = row.get("ageing", "00:00")
-            expander_label = f"{row['id']} - {row['customer']} {flag} – {summary} ⏳ {ageing_value}"
+            #ageing_value = row.get("ageing", "00:00")
+            #expander_label = f"{row['id']} - {row['customer']} {flag} – {summary} ⏳ {ageing_value}"
             #expander_label = f"{row['id']} - {row['customer']} {flag}"
+            for _, row in filtered_df.iterrows():
+            ageing_value = row["ageing"]
+            expander_label = f"{row['id']} - {row['customer']} {row.get('flag', '')} – {row.get('summary', '')} ⏳ {ageing_value}"
+            # ...render your expander with expander_label
+
             
             with st.expander(expander_label, expanded=False):
                 colA, colB, colC = st.columns(3)
