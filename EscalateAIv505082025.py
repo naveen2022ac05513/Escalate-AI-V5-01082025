@@ -134,17 +134,25 @@ def ensure_schema():
     conn.commit()
     conn.close()
 
-import hashlib
-
-seen_issue_hashes = set()
-
-def get_issue_hash(issue_text):
+def generate_issue_hash(issue_text):
     """
-    Generates a consistent hash for the issue text.
-    Used to detect duplicates across forwarded or repeated emails.
+    Cleans and extracts core text from email (stripping forwards, quotes, excessive metadata).
+    Produces a hash that's more tolerant to formatting noise.
     """
+    # Remove common forwarding markers
+    patterns_to_remove = [
+        r"[-]+[ ]*Forwarded message[ ]*[-]+",
+        r"From:.*", r"Sent:.*", r"To:.*", r"Subject:.*",
+        r">.*",                     # Quoted lines
+        r"On .* wrote:",            # Replies
+        r"\n\s*\n"                  # Excess whitespace blocks
+    ]
+    for pat in patterns_to_remove:
+        issue_text = re.sub(pat, "", issue_text, flags=re.IGNORECASE)
+
+    # Normalize text and trim
     clean_text = re.sub(r'\s+', ' ', issue_text.lower().strip())
-    return hashlib.md5(clean_text.encode()).hexdigest()
+    return hashlib.md5(clean_text.encode()).hexdigest() 
     
 def insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag):
     """
@@ -206,10 +214,12 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 # --- Email Parsing ---
 # --------------------
 
+global_seen_hashes = set()
+
 def parse_emails():
     """
-    Securely connects to IMAP, fetches unseen emails,
-    and filters out repeated issues using hashing.
+    Parses unseen emails, extracts summaries,
+    and filters forwarded/repeated content via normalized hashing.
     """
     from dotenv import load_dotenv
     load_dotenv()
@@ -219,6 +229,7 @@ def parse_emails():
     email_pass = os.getenv("EMAIL_PASS")
 
     emails = []
+
     try:
         conn = imaplib.IMAP4_SSL(imap_server)
         conn.login(email_user, email_pass)
@@ -244,12 +255,12 @@ def parse_emails():
                     else:
                         body = msg.get_payload(decode=True).decode(errors='ignore')
 
-                    full_issue = f"{subject} - {body[:200]}"
-                    summary = summarize_issue_text(full_issue)
-                    hash_value = get_issue_hash(summary)
+                    full_text = f"{subject} - {body}"
+                    hash_val = generate_issue_hash(full_text)
 
-                    if hash_value not in seen_issue_hashes:
-                        seen_issue_hashes.add(hash_value)
+                    if hash_val not in global_seen_hashes:
+                        global_seen_hashes.add(hash_val)
+                        summary = summarize_issue_text(full_text)
                         emails.append({
                             "customer": from_,
                             "issue": summary
@@ -257,6 +268,7 @@ def parse_emails():
 
         conn.logout()
         return emails
+
     except Exception as e:
         st.error(f"Failed to parse emails: {e}")
         return []
