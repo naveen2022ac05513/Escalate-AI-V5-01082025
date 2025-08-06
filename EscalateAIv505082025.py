@@ -737,7 +737,7 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
             #expander_label = f"{row['id']} - {row['customer']} {flag}"
         
         with st.expander(expander_label, expanded=False):
-        colA, colB, colC = st.columns(3)
+    colA, colB, colC = st.columns(3)
 
     # Show case ageing time
     try:
