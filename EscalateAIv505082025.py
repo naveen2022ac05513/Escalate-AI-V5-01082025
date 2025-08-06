@@ -728,80 +728,78 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
     with col:
         col.markdown(f"<h3 style='background-color:{STATUS_COLORS[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>", unsafe_allow_html=True)
         bucket = df[df["status"] == status]
+
         for i, row in bucket.iterrows():
             flag = "🚩" if row['escalated'] == 'Yes' else ""
             header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
             urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
             summary = summarize_issue_text(row['issue'])
             expander_label = f"{row['id']} - {row['customer']} {flag} – {summary}"
-            #expander_label = f"{row['id']} - {row['customer']} {flag}"
-        
-        with st.expander(expander_label, expanded=False):
-    colA, colB, colC = st.columns(3)
 
-    # Show case ageing time
-    try:
-        timestamp = pd.to_datetime(row["timestamp"])
-        now = datetime.datetime.now()
-        ageing_timedelta = now - timestamp
-        days = ageing_timedelta.days
-        hours, remainder = divmod(ageing_timedelta.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
-        ageing_str = f"{days}d {hours}h {minutes}m"
-    except:
-        ageing_str = "N/A"
+            with st.expander(expander_label, expanded=False):
+                colA, colB, colC = st.columns(3)
 
-    st.markdown(f"**⏱️ Ageing:** `{ageing_str}`")
+                try:
+                    timestamp = pd.to_datetime(row["timestamp"])
+                    now = datetime.datetime.now()
+                    ageing_timedelta = now - timestamp
+                    days = ageing_timedelta.days
+                    hours, remainder = divmod(ageing_timedelta.seconds, 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    ageing_str = f"{days}d {hours}h {minutes}m"
+                except:
+                    ageing_str = "N/A"
 
-    if colA.button("✔️ Mark as Resolved", key=f"resolved_{row['id']}"):
-        update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], row["owner_email"])
-        send_alert("Case marked as resolved.", via="email", recipient=row["owner_email"])
-        send_alert("Case marked as resolved.", via="teams", recipient=row["owner_email"])
+                st.markdown(f"**⏱️ Ageing:** `{ageing_str}`")
 
-    if colB.button("🚀 Escalate to Tier 2", key=f"tier2_{row['id']}"):
-        escalate_to_tier_2(row["id"])  # optional extra logic
-        send_alert("Case escalated to Tier 2.", via="teams", recipient="tier2@company.com")
+                if colA.button("✔️ Mark as Resolved", key=f"resolved_{row['id']}"):
+                    update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], row["owner_email"])
+                    send_alert("Case marked as resolved.", via="email", recipient=row["owner_email"])
+                    send_alert("Case marked as resolved.", via="teams", recipient=row["owner_email"])
 
-    if colC.button("📣 Notify Manager", key=f"notify_mgr_{row['id']}"):
-        send_alert(f"Escalation #{row['id']} needs review", via="email", recipient="manager@company.com")
+                if colB.button("🚀 Escalate to Tier 2", key=f"tier2_{row['id']}"):
+                    escalate_to_tier_2(row["id"])
+                    send_alert("Case escalated to Tier 2.", via="teams", recipient="tier2@company.com")
 
-    st.markdown(f"**Issue:** {row['issue']}")
-    st.markdown(f"**Severity:** <span style='color:{header_color};font-weight:bold;'>{row['severity']}</span>", unsafe_allow_html=True)
-    st.markdown(f"**Criticality:** {row['criticality']}")
-    st.markdown(f"**Category:** {row['category']}")
-    st.markdown(f"**Sentiment:** {row['sentiment']}")
-    st.markdown(f"**Urgency:** <span style='color:{urgency_color};font-weight:bold;'>{row['urgency']}</span>", unsafe_allow_html=True)
-    st.markdown(f"**Escalated:** {row['escalated']}")
+                if colC.button("📣 Notify Manager", key=f"notify_mgr_{row['id']}"):
+                    send_alert(f"Escalation #{row['id']} needs review", via="email", recipient="manager@company.com")
 
-    # Editable fields
-    new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"],
-                              index=["Open", "In Progress", "Resolved"].index(row["status"]),
-                              key=f"status_{row['id']}")
-    new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
-    new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
-    new_owner_email = st.text_input("Owner Email", row.get("owner_email", ""), key=f"email_{row['id']}")
+                st.markdown(f"**Issue:** {row['issue']}")
+                st.markdown(f"**Severity:** <span style='color:{header_color};font-weight:bold;'>{row['severity']}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Criticality:** {row['criticality']}")
+                st.markdown(f"**Category:** {row['category']}")
+                st.markdown(f"**Sentiment:** {row['sentiment']}")
+                st.markdown(f"**Urgency:** <span style='color:{urgency_color};font-weight:bold;'>{row['urgency']}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Escalated:** {row['escalated']}")
 
-    if st.button("💾 Save Changes", key=f"save_{row['id']}"):
-        update_escalation_status(row['id'], new_status, new_action, new_owner, new_owner_email)
-        st.success("Escalation updated.")
+                new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"],
+                                          index=["Open", "In Progress", "Resolved"].index(row["status"]),
+                                          key=f"status_{row['id']}")
+                new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
+                new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
+                new_owner_email = st.text_input("Owner Email", row.get("owner_email", ""), key=f"email_{row['id']}")
 
-        notification_message = f"""
-        🔔 Hello {new_owner},
+                if st.button("💾 Save Changes", key=f"save_{row['id']}"):
+                    update_escalation_status(row['id'], new_status, new_action, new_owner, new_owner_email)
+                    st.success("Escalation updated.")
 
-        The escalation case #{row['id']} assigned to you has been updated:
+                    notification_message = f"""
+                    🔔 Hello {new_owner},
 
-        • Status: {new_status}
-        • Action Taken: {new_action}
-        • Category: {row['category']}
-        • Severity: {row['severity']}
-        • Urgency: {row['urgency']}
-        • Sentiment: {row['sentiment']}
+                    The escalation case #{row['id']} assigned to you has been updated:
 
-        Please review the updates on the EscalateAI dashboard.
-        """
+                    • Status: {new_status}
+                    • Action Taken: {new_action}
+                    • Category: {row['category']}
+                    • Severity: {row['severity']}
+                    • Urgency: {row['urgency']}
+                    • Sentiment: {row['sentiment']}
 
-        send_alert(notification_message.strip(), via="email", recipient=new_owner_email)
-        send_alert(notification_message.strip(), via="teams", recipient=new_owner_email)
+                    Please review the updates on the EscalateAI dashboard.
+                    """
+
+                    send_alert(notification_message.strip(), via="email", recipient=new_owner_email)
+                    send_alert(notification_message.strip(), via="teams", recipient=new_owner_email)
     
 # --- Escalated issues tab ---
 with tabs[1]:
