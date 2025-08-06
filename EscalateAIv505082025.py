@@ -232,10 +232,12 @@ def parse_emails(imap_server, email_user, email_pass):
                     emails.append({
                         "customer": from_,
                         #"issue": f"{subject} - {body[:200]}"  # Truncate body snippet for brevity
-                        full_issue = f"{subject} - {body[:200]}"
-                        summary = summarize_issue_text(full_issue)
-                        "issue": summary
-                    })
+                       full_issue = f"{subject} - {body[:200]}"
+                       summary = summarize_issue_text(full_issue)
+                       emails.append({
+                            "customer": from_,
+                            "issue": summary
+                        })
         conn.logout()
         return emails
     except Exception as e:
