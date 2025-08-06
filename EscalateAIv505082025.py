@@ -212,14 +212,17 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 import datetime
 
 def compute_ageing(ts):
-    if not ts or pd.isnull(ts): return "00:00"
+    if not ts or pd.isnull(ts):
+        return "00:00"
     now = datetime.datetime.now()
     ts_dt = pd.to_datetime(ts, errors='coerce')
+    if pd.isnull(ts_dt):
+        return "00:00"
     elapsed = now - ts_dt
     total_minutes = int(elapsed.total_seconds() // 60)
     hours, minutes = divmod(total_minutes, 60)
     return f"{hours:02d}:{minutes:02d}"
-
+    
 df["ageing"] = df["timestamp"].apply(compute_ageing)
 
 # --------------------
