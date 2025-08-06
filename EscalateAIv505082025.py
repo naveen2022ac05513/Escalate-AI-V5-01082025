@@ -193,6 +193,13 @@ def fetch_escalations():
         conn.close()
     return df
 
+df["timestamp"] = pd.to_datetime(df["timestamp"], errors='coerce')
+
+df["ageing"] = df["timestamp"].apply(
+    lambda ts: f"{int((datetime.datetime.now() - ts).total_seconds() // 3600):02}:{int(((datetime.datetime.now() - ts).total_seconds() % 3600) // 60):02}"
+    if pd.notnull(ts) else "00:00"
+)
+
 
 def update_escalation_status(esc_id, status, action_taken, action_owner, feedback=None):
     """
@@ -272,25 +279,6 @@ def parse_emails():
         st.error(f"Failed to parse emails: {e}")
         return []
 
-import datetime
-# ⏱️ Utility: Compute HH:MM Ageing
-
-def compute_ageing(ts):
-    if not ts or pd.isnull(ts):
-        return "00:00"
-    try:
-        ts_dt = pd.to_datetime(ts, errors='coerce')
-        if pd.isnull(ts_dt):
-            return "00:00"
-        now = datetime.datetime.now()
-        elapsed = now - ts_dt
-        total_minutes = int(elapsed.total_seconds() // 60)
-        hours, minutes = divmod(total_minutes, 60)
-        return f"{hours:02d}:{minutes:02d}"
-    except Exception:
-        return "00:00"
-        
-df["ageing"] = df["timestamp"].apply(compute_ageing)
 
 # -----------------------
 # --- NLP & Tagging ---
