@@ -572,6 +572,7 @@ if st.sidebar.button("Fetch Emails"):
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
         insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
     st.sidebar.success(f"✅ {len(emails)} emails processed")
+    st.info(f"Fetched {len(messages[0].split())} unseen message(s)")
 
 # ⏰ SLA Monitoring
 st.sidebar.markdown("### ⏰ SLA Monitor")
