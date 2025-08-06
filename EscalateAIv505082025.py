@@ -155,32 +155,25 @@ def generate_issue_hash(issue_text):
     return hashlib.md5(clean_text.encode()).hexdigest() 
     
 def insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag):
+    """
+    Insert a new escalation record into the SQLite database.
+    Fields like status default to "Open", timestamps set to now.
+    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-
-    issue_hash = generate_issue_hash(issue)
-
-    # Check if this issue already exists (deduplication logic)
-    cursor.execute("SELECT COUNT(*) FROM escalations WHERE issue_hash = ?", (issue_hash,))
-    if cursor.fetchone()[0] > 0:
-        conn.close()
-        return  # Skip duplicate
-
     new_id = get_next_escalation_id()
     now = datetime.datetime.now().isoformat()
-
     cursor.execute('''
         INSERT INTO escalations (
             id, customer, issue, sentiment, urgency, severity, criticality, category,
             status, timestamp, escalated, priority, escalation_flag,
-            action_taken, owner, action_owner, status_update_date, user_feedback, issue_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            action_taken, owner, action_owner, status_update_date, user_feedback
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         new_id, customer, issue, sentiment, urgency, severity, criticality, category,
         "Open", now, escalation_flag, "normal", escalation_flag,
-        "", "", "", "", "", issue_hash
+        "", "", "", "", ""
     ))
-
     conn.commit()
     conn.close()
 
