@@ -19,8 +19,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 import threading
 from dotenv import load_dotenv
-from streamlit_autorefresh import st_autorefresh
 
+from streamlit_autorefresh import st_autorefresh
 st_autorefresh(interval=60000, limit=None, key="boardrefresh")
 
 # Load environment variables from .env file (for credentials & config)
