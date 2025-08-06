@@ -551,6 +551,7 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 
 # 📥 Upload Section
+
 st.sidebar.markdown("### 📥 Upload & Ingest")
 uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
 if uploaded_file:
@@ -747,10 +748,23 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                     hours, remainder = divmod(ageing_timedelta.seconds, 3600)
                     minutes, _ = divmod(remainder, 60)
                     ageing_str = f"{days}d {hours}h {minutes}m"
+                    
+                    # Convert total age to hours for color coding
+                    total_hours = ageing_timedelta.total_seconds() / 3600
+                
+                    if total_hours < 12:
+                        ageing_color = "#2ecc71"  # Green
+                    elif 12 <= total_hours < 24:
+                        ageing_color = "#e67e22"  # Orange
+                    else:
+                        ageing_color = "#e74c3c"  # Red
+                
                 except:
                     ageing_str = "N/A"
-
-                st.markdown(f"**⏱️ Ageing:** `{ageing_str}`")
+                    ageing_color = "#7f8c8d"  # Grey if error
+                
+                # Display ageing with color
+                st.markdown(f"**⏱️ Ageing:** <span style='color:{ageing_color}; font-weight:bold;'>{ageing_str}</span>", unsafe_allow_html=True)
 
                 if colA.button("✔️ Mark as Resolved", key=f"resolved_{row['id']}"):
                     update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], row["owner_email"])
