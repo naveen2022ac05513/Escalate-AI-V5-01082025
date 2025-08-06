@@ -104,13 +104,15 @@ def get_next_escalation_id():
     return f"{ESCALATION_PREFIX}{str(next_num).zfill(5)}"
 
 
+
 def ensure_schema():
     """
     Ensure the SQLite database and escalations table exist.
-    Creates the table with all necessary columns for tracking escalations.
+    Also adds 'issue_hash' column if missing, used for deduplication.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS escalations (
             id TEXT PRIMARY KEY,
@@ -130,9 +132,17 @@ def ensure_schema():
             escalation_flag TEXT,
             action_owner TEXT,
             status_update_date TEXT,
-            user_feedback TEXT
+            user_feedback TEXT,
+            issue_hash TEXT
         )
     ''')
+
+    # Ensure issue_hash column exists (for older DBs)
+    cursor.execute("PRAGMA table_info(escalations)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "issue_hash" not in columns:
+        cursor.execute("ALTER TABLE escalations ADD COLUMN issue_hash TEXT")
+
     conn.commit()
     conn.close()
 
@@ -158,26 +168,37 @@ def generate_issue_hash(issue_text):
     
 def insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag):
     """
-    Insert a new escalation record into the SQLite database.
-    Fields like status default to "Open", timestamps set to now.
+    Insert a new escalation record into the SQLite database, avoiding duplicates using issue_hash.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    issue_hash = generate_issue_hash(issue)
+
+    # Check if this issue hash already exists in DB
+    cursor.execute("SELECT COUNT(*) FROM escalations WHERE issue_hash = ?", (issue_hash,))
+    if cursor.fetchone()[0] > 0:
+        conn.close()
+        return  # Duplicate found, skip insertion
+
     new_id = get_next_escalation_id()
     now = datetime.datetime.now().isoformat()
+
     cursor.execute('''
         INSERT INTO escalations (
             id, customer, issue, sentiment, urgency, severity, criticality, category,
             status, timestamp, escalated, priority, escalation_flag,
-            action_taken, owner, action_owner, status_update_date, user_feedback
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            action_taken, owner, action_owner, status_update_date, user_feedback, issue_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         new_id, customer, issue, sentiment, urgency, severity, criticality, category,
         "Open", now, escalation_flag, "normal", escalation_flag,
-        "", "", "", "", ""
+        "", "", "", "", "", issue_hash
     ))
+
     conn.commit()
     conn.close()
+
 
 
 def fetch_escalations():
