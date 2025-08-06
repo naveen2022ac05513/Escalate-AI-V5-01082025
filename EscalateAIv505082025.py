@@ -209,6 +209,18 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
     conn.commit()
     conn.close()
 
+import datetime
+
+def compute_ageing(ts):
+    if not ts or pd.isnull(ts): return "00:00"
+    now = datetime.datetime.now()
+    ts_dt = pd.to_datetime(ts, errors='coerce')
+    elapsed = now - ts_dt
+    total_minutes = int(elapsed.total_seconds() // 60)
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+df["ageing"] = df["timestamp"].apply(compute_ageing)
 
 # --------------------
 # --- Email Parsing ---
@@ -733,7 +745,9 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
             header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
             urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
             summary = summarize_issue_text(row['issue'])
-            expander_label = f"{row['id']} - {row['customer']} {flag} – {summary}"
+            ageing_value = compute_ageing(row["timestamp"])
+            expander_label = f"{row['id']} - {row['customer']} {flag} – {summary} ⏳ {ageing_value}"
+            #expander_label = f"{row['id']} - {row['customer']} {flag} – {summary}"
             #expander_label = f"{row['id']} - {row['customer']} {flag}"
             
             with st.expander(expander_label, expanded=False):
