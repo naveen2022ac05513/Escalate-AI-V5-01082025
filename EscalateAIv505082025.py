@@ -566,7 +566,7 @@ with col2:
 # 📩 Email Fetching
 st.sidebar.markdown("### 📩 Email Integration")
 if st.sidebar.button("Fetch Emails"):
-    emails = parse_emails(EMAIL_SERVER, EMAIL_USER, EMAIL_PASS)
+    emails = parse_emails()
     for e in emails:
         issue, customer = e["issue"], e["customer"]
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
