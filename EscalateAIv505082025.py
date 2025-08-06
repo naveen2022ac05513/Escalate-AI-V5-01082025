@@ -63,6 +63,14 @@ processed_email_uids_lock = threading.Lock()  # Ensure thread-safe access to pro
 # --- Helper Functions
 # ---------------------
 
+def summarize_issue_text(issue_text):
+    """
+    Generate a concise issue summary for the Kanban board.
+    Trims verbosity and keeps it within ~120 chars.
+    """
+    clean_text = re.sub(r'\s+', ' ', issue_text).strip()
+    return clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
+    
 def get_next_escalation_id():
     """
     Generate a sequential escalation ID in the format SESICE-25XXXXX
@@ -126,7 +134,26 @@ def ensure_schema():
     conn.commit()
     conn.close()
 
+def generate_issue_hash(issue_text):
+    """
+    Cleans and extracts core text from email (stripping forwards, quotes, excessive metadata).
+    Produces a hash that's more tolerant to formatting noise.
+    """
+    # Remove common forwarding markers
+    patterns_to_remove = [
+        r"[-]+[ ]*Forwarded message[ ]*[-]+",
+        r"From:.*", r"Sent:.*", r"To:.*", r"Subject:.*",
+        r">.*",                     # Quoted lines
+        r"On .* wrote:",            # Replies
+        r"\n\s*\n"                  # Excess whitespace blocks
+    ]
+    for pat in patterns_to_remove:
+        issue_text = re.sub(pat, "", issue_text, flags=re.IGNORECASE)
 
+    # Normalize text and trim
+    clean_text = re.sub(r'\s+', ' ', issue_text.lower().strip())
+    return hashlib.md5(clean_text.encode()).hexdigest() 
+    
 def insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag):
     """
     Insert a new escalation record into the SQLite database.
@@ -187,48 +214,65 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 # --- Email Parsing ---
 # --------------------
 
-def parse_emails(imap_server, email_user, email_pass):
+global_seen_hashes = set()
+
+def parse_emails():
     """
-    Connect to the IMAP email server, fetch unseen emails from the inbox,
-    extract customer email and issue text (subject + body snippet).
-    Returns a list of dicts with 'customer' and 'issue' keys.
+    Parses unseen emails, extracts summaries,
+    and filters forwarded/repeated content via normalized hashing.
     """
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    imap_server = os.getenv("EMAIL_SERVER", "imap.gmail.com")
+    email_user = os.getenv("EMAIL_USER")
+    email_pass = os.getenv("EMAIL_PASS")
+
+    emails = []
+
     try:
         conn = imaplib.IMAP4_SSL(imap_server)
         conn.login(email_user, email_pass)
         conn.select("inbox")
         _, messages = conn.search(None, "UNSEEN")
-        emails = []
+
         for num in messages[0].split():
             _, msg_data = conn.fetch(num, "(RFC822)")
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
-                    # Decode email subject properly
                     subject = decode_header(msg["Subject"])[0][0]
                     if isinstance(subject, bytes):
                         subject = subject.decode(errors='ignore')
                     from_ = msg.get("From")
+
                     body = ""
                     if msg.is_multipart():
-                        # Iterate over parts to find plain text body
                         for part in msg.walk():
                             if part.get_content_type() == "text/plain":
                                 body = part.get_payload(decode=True).decode(errors='ignore')
                                 break
                     else:
                         body = msg.get_payload(decode=True).decode(errors='ignore')
-                    emails.append({
-                        "customer": from_,
-                        "issue": f"{subject} - {body[:200]}"  # Truncate body snippet for brevity
-                    })
+
+                    full_text = f"{subject} - {body}"
+                    hash_val = generate_issue_hash(full_text)
+
+                    if hash_val not in global_seen_hashes:
+                        global_seen_hashes.add(hash_val)
+                        summary = summarize_issue_text(full_text)
+                        emails.append({
+                            "customer": from_,
+                            "issue": summary
+                        })
+
         conn.logout()
         return emails
+
     except Exception as e:
         st.error(f"Failed to parse emails: {e}")
         return []
-
-
+        
 # -----------------------
 # --- NLP & Tagging ---
 # -----------------------
@@ -512,10 +556,11 @@ uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
 if uploaded_file:
     df_excel = pd.read_excel(uploaded_file)
     for _, row in df_excel.iterrows():
-        issue = str(row.get("issue", ""))
+        issue_summary = summarize_issue_text(issue)
         customer = str(row.get("customer", "Unknown"))
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
-        insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
+        #insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
+        insert_escalation(customer, issue_summary, sentiment, urgency, severity, criticality, category, escalation_flag)
     st.sidebar.success("✅ File processed successfully")
 
 # 📤 Download Section
@@ -540,12 +585,13 @@ with col2:
 # 📩 Email Fetching
 st.sidebar.markdown("### 📩 Email Integration")
 if st.sidebar.button("Fetch Emails"):
-    emails = parse_emails(EMAIL_SERVER, EMAIL_USER, EMAIL_PASS)
+    emails = parse_emails()
     for e in emails:
         issue, customer = e["issue"], e["customer"]
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
         insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
     st.sidebar.success(f"✅ {len(emails)} emails processed")
+    #st.info(f"Fetched {len(messages[0].split())} unseen message(s)")
 
 # ⏰ SLA Monitoring
 st.sidebar.markdown("### ⏰ SLA Monitor")
@@ -686,7 +732,9 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
             flag = "🚩" if row['escalated'] == 'Yes' else ""
             header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
             urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
-            expander_label = f"{row['id']} - {row['customer']} {flag}"
+            summary = summarize_issue_text(row['issue'])
+            expander_label = f"{row['id']} - {row['customer']} {flag} – {summary}"
+            #expander_label = f"{row['id']} - {row['customer']} {flag}"
             
             with st.expander(expander_label, expanded=False):
                 colA, colB, colC = st.columns(3)
