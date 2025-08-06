@@ -209,6 +209,7 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
     conn.commit()
     conn.close()
 
+
 # --------------------
 # --- Email Parsing ---
 # --------------------
@@ -271,8 +272,7 @@ def parse_emails():
     except Exception as e:
         st.error(f"Failed to parse emails: {e}")
         return []
-
-
+        
 # -----------------------
 # --- NLP & Tagging ---
 # -----------------------
@@ -733,9 +733,7 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
             header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
             urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
             summary = summarize_issue_text(row['issue'])
-            ageing_value = compute_ageing(row["timestamp"])
-            expander_label = f"{row['id']} - {row['customer']} {flag} – {summary} ⏳ {ageing_value}"
-            #expander_label = f"{row['id']} - {row['customer']} {flag} – {summary}"
+            expander_label = f"{row['id']} - {row['customer']} {flag} – {summary}"
             #expander_label = f"{row['id']} - {row['customer']} {flag}"
             
             with st.expander(expander_label, expanded=False):
