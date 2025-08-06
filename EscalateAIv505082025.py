@@ -13,12 +13,14 @@ import imaplib
 import email
 from email.header import decode_header
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import hashlib
 import smtplib
 import requests
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 import threading
 from dotenv import load_dotenv
+
 
 # Load environment variables from .env file (for credentials & config)
 load_dotenv()
