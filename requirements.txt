@@ -8,3 +8,4 @@ python-dotenv>=1.0.0
 openpyxl>=3.1.0
 twilio>=7.0.0
 nltk>=3.8.0
+streamlit-autorefresh
