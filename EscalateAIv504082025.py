@@ -667,35 +667,16 @@ def send_alert(message, via="email", recipient=None):
 tabs = st.tabs(["🗃️ All", "🚩 Escalated", "🔁 Feedback & Retraining"])
 
 # --- All escalations tab with Kanban board ---
-#with tabs[0]:
-    #st.subheader("📊 Escalation Kanban Board")
+with tabs[0]:
+    st.subheader("📊 Escalation Kanban Board")
 
-    #df = filtered_df
-    #counts = df['status'].value_counts()
-    #open_count = counts.get('Open', 0)
-    #inprogress_count = counts.get('In Progress', 0)
-    #resolved_count = counts.get('Resolved', 0)
-    #st.markdown(f"**Open:** {open_count} | **In Progress:** {inprogress_count} | **Resolved:** {resolved_count}")
-from streamlit_dnd import dnd_area
+    df = filtered_df
+    counts = df['status'].value_counts()
+    open_count = counts.get('Open', 0)
+    inprogress_count = counts.get('In Progress', 0)
+    resolved_count = counts.get('Resolved', 0)
+    st.markdown(f"**Open:** {open_count} | **In Progress:** {inprogress_count} | **Resolved:** {resolved_count}")
 
-st.subheader("🗂️ Drag-and-Drop Escalation Kanban")
-
-statuses = ["Open", "In Progress", "Resolved"]
-cols = st.columns(len(statuses))
-
-# Group tasks by status
-tasks_by_status = {status: df[df["status"] == status] for status in statuses}
-
-for i, status in enumerate(statuses):
-    with cols[i]:
-        st.markdown(f"### {status}")
-        with dnd_area(key=status, layout="vertical"):
-            for _, row in tasks_by_status[status].iterrows():
-                task_id = row["id"]
-                customer = row["customer"]
-                issue = row["issue"]
-                flag = "🚨" if row["escalated"] == "Yes" else ""
-                st.markdown(f"📌 **{task_id}** - {customer} {flag}<br>{issue[:100]}...", unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns(3)
 for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
