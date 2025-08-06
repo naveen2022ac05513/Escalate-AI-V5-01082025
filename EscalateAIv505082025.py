@@ -195,17 +195,30 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 # --- Email Parsing ---
 # --------------------
 
-def parse_emails(imap_server, email_user, email_pass):
+def parse_emails():
     """
-    Connects to the IMAP server, fetches unseen emails,
-    and returns a list of concise issue summaries.
+    Securely connects to the IMAP server, fetches unseen emails,
+    and returns a list of summarized issue entries.
+    Loads credentials via environment variables from .env
     """
+    import os
+    import imaplib
+    import email
+    from email.header import decode_header
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    imap_server = os.getenv("EMAIL_SERVER", "imap.gmail.com")
+    email_user = os.getenv("EMAIL_USER")
+    email_pass = os.getenv("EMAIL_PASS")
+
+    emails = []
+
     try:
         conn = imaplib.IMAP4_SSL(imap_server)
         conn.login(email_user, email_pass)
         conn.select("inbox")
         _, messages = conn.search(None, "UNSEEN")
-        emails = []
 
         for num in messages[0].split():
             _, msg_data = conn.fetch(num, "(RFC822)")
@@ -234,12 +247,13 @@ def parse_emails(imap_server, email_user, email_pass):
                         "customer": from_,
                         "issue": summary
                     })
+
         conn.logout()
         return emails
+
     except Exception as e:
         st.error(f"Failed to parse emails: {e}")
         return []
-
 # -----------------------
 # --- NLP & Tagging ---
 # -----------------------
