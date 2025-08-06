@@ -211,6 +211,7 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 
 import datetime
 
+# ⏱️ Utility: Compute HH:MM Ageing
 def compute_ageing(ts):
     if not ts or pd.isnull(ts):
         return "00:00"
@@ -225,7 +226,7 @@ def compute_ageing(ts):
         return f"{hours:02d}:{minutes:02d}"
     except Exception:
         return "00:00"
-    
+
 df["ageing"] = df["timestamp"].apply(compute_ageing)
 
 # --------------------
