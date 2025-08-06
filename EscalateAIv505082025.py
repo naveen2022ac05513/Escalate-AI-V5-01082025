@@ -134,7 +134,18 @@ def ensure_schema():
     conn.commit()
     conn.close()
 
+import hashlib
 
+seen_issue_hashes = set()
+
+def get_issue_hash(issue_text):
+    """
+    Generates a consistent hash for the issue text.
+    Used to detect duplicates across forwarded or repeated emails.
+    """
+    clean_text = re.sub(r'\s+', ' ', issue_text.lower().strip())
+    return hashlib.md5(clean_text.encode()).hexdigest()
+    
 def insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag):
     """
     Insert a new escalation record into the SQLite database.
@@ -197,23 +208,17 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 
 def parse_emails():
     """
-    Securely connects to the IMAP server, fetches unseen emails,
-    and returns a list of summarized issue entries.
-    Loads credentials via environment variables from .env
+    Securely connects to IMAP, fetches unseen emails,
+    and filters out repeated issues using hashing.
     """
-    import os
-    import imaplib
-    import email
-    from email.header import decode_header
     from dotenv import load_dotenv
-
     load_dotenv()
+
     imap_server = os.getenv("EMAIL_SERVER", "imap.gmail.com")
     email_user = os.getenv("EMAIL_USER")
     email_pass = os.getenv("EMAIL_PASS")
 
     emails = []
-
     try:
         conn = imaplib.IMAP4_SSL(imap_server)
         conn.login(email_user, email_pass)
@@ -225,7 +230,6 @@ def parse_emails():
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
-
                     subject = decode_header(msg["Subject"])[0][0]
                     if isinstance(subject, bytes):
                         subject = subject.decode(errors='ignore')
@@ -242,18 +246,21 @@ def parse_emails():
 
                     full_issue = f"{subject} - {body[:200]}"
                     summary = summarize_issue_text(full_issue)
+                    hash_value = get_issue_hash(summary)
 
-                    emails.append({
-                        "customer": from_,
-                        "issue": summary
-                    })
+                    if hash_value not in seen_issue_hashes:
+                        seen_issue_hashes.add(hash_value)
+                        emails.append({
+                            "customer": from_,
+                            "issue": summary
+                        })
 
         conn.logout()
         return emails
-
     except Exception as e:
         st.error(f"Failed to parse emails: {e}")
         return []
+        
 # -----------------------
 # --- NLP & Tagging ---
 # -----------------------
