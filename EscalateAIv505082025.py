@@ -520,9 +520,9 @@ with tabs[2]:
         #st.markdown(f"**🧠 Feedback Accuracy:** {correct}/{total} correct ({(correct/total)*100:.1f}%)")
         if total and isinstance(correct, (int, float)):
             accuracy = (correct / total) * 100
-                st.markdown(f"**🧠 Feedback Accuracy:** {correct}/{total} correct ({accuracy:.1f}%)")
-            else:
-                st.markdown("**🧠 Feedback Accuracy:** Data unavailable or invalid.")
+            st.markdown(f"**🧠 Feedback Accuracy:** {correct}/{total} correct ({accuracy:.1f}%)")
+        else:
+            st.markdown("**🧠 Feedback Accuracy:** Data unavailable or invalid.")
                 
     # 📝 Feedback Form per Escalation
     for _, row in df_feedback.iterrows():
