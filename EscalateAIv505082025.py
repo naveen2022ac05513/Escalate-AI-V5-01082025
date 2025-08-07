@@ -552,18 +552,39 @@ st.sidebar.markdown("""
 
 # 📥 Upload Section
 
-st.sidebar.markdown("### 📥 Upload & Ingest")
+# 📥 Upload Excel and process all rows
 uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
+
 if uploaded_file:
-    df_excel = pd.read_excel(uploaded_file)
-    for _, row in df_excel.iterrows():
-        issue = str(row.get("issue", "")).strip()
-        issue_summary = summarize_issue_text(issue)
-        customer = str(row.get("customer", "Unknown")).strip()
-        sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
-    insert_escalation(customer, issue_summary, sentiment, urgency, severity, criticality, category, escalation_flag)
-    
-    st.sidebar.success("✅ File processed successfully")
+    st.session_state["uploaded_file"] = uploaded_file
+    st.session_state["file_processed"] = False
+
+# ✅ Process file only once
+if "uploaded_file" in st.session_state and not st.session_state.get("file_processed", False):
+    try:
+        df_excel = pd.read_excel(st.session_state["uploaded_file"])
+        st.sidebar.info(f"📄 {len(df_excel)} rows found in uploaded file.")
+
+        for i, row in df_excel.iterrows():
+            issue = str(row.get("issue", "")).strip()
+            customer = str(row.get("customer", "Unknown")).strip()
+
+            if not issue:
+                st.warning(f"⚠️ Row {i+1} skipped: missing issue text.")
+                continue
+
+            issue_summary = summarize_issue_text(issue)
+            sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
+
+            insert_escalation(customer, issue_summary, sentiment, urgency, severity, criticality, category, escalation_flag)
+
+            st.write(f"✅ Row {i+1} processed: {issue_summary}")
+
+        st.session_state["file_processed"] = True
+        st.sidebar.success("✅ Entire file processed successfully.")
+
+    except Exception as e:
+        st.sidebar.error(f"❌ Failed to process file: {e}")
 
 # 📤 Download Section
 st.sidebar.markdown("### 📤 Downloads")
