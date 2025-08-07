@@ -217,6 +217,39 @@ def send_alert(message, via="email", recipient=None):
 
     except Exception as e:
         st.error(f"❌ Failed to send alert: {e}")
+
+def process_uploaded_excel(uploaded_file):
+    df_excel = pd.read_excel(uploaded_file)
+    for _, row in df_excel.iterrows():
+        issue = str(row.get("issue", ""))
+        customer = str(row.get("customer", "Unknown"))
+        location = str(row.get("location", ""))
+        region = str(row.get("region", ""))
+        activity = str(row.get("activity", ""))
+
+        issue_summary = summarize_issue_text(issue)
+        issue_hash = generate_issue_hash(issue)
+        if issue_hash in global_seen_hashes:
+            continue
+        global_seen_hashes.add(issue_hash)
+
+        # ✅ Analyze issue before inserting
+        sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
+
+        insert_escalation(
+            customer,
+            issue_summary,
+            sentiment,
+            urgency,
+            severity,
+            criticality,
+            category,
+            escalation_flag,
+            location,
+            region,
+            activity
+        )
+
 # -------------------
 # --- DB Setup -------
 # -------------------
