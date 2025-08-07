@@ -554,6 +554,83 @@ with tabs[2]:
         else:
             st.warning("⚠️ Not enough data to retrain model.")
 # -------------------
+# 📤 Excel Downloads
+# -------------------
+st.sidebar.markdown("### 📤 Download Data")
+
+df_all = fetch_escalations()
+
+# Separate complaints and escalations
+df_complaints = df_all[df_all["escalated"] != "Yes"]
+df_escalated = df_all[df_all["escalated"] == "Yes"]
+
+def convert_df_to_excel(df):
+    import io
+    from pandas import ExcelWriter
+
+    output = io.BytesIO()
+    with ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    processed_data = output.getvalue()
+    return processed_data
+
+# Download Complaints
+complaints_excel = convert_df_to_excel(df_complaints)
+st.sidebar.download_button(
+    label="📥 Download Complaints",
+    data=complaints_excel,
+    file_name="complaints.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+# Download Escalations
+escalations_excel = convert_df_to_excel(df_escalated)
+st.sidebar.download_button(
+    label="📥 Download Escalations",
+    data=escalations_excel,
+    file_name="escalations.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+# -------------------
+# 📲 WhatsApp Notification
+# -------------------
+st.sidebar.markdown("### 📲 WhatsApp Notification for Resolved Escalations")
+
+# Filter resolved escalations
+df_resolved = df[df["status"] == "Resolved"]
+
+if df_resolved.empty:
+    st.sidebar.info("No resolved escalations available.")
+else:
+    selected_id = st.sidebar.selectbox(
+        "Select Resolved Escalation",
+        df_resolved["id"].tolist()
+    )
+
+    mobile_number = st.sidebar.text_input("📞 Mobile Number (with country code)", placeholder="+91XXXXXXXXXX")
+    custom_message = st.sidebar.text_area("📝 Custom Message", f"Escalation {selected_id} has been resolved.")
+
+    if st.sidebar.button("Send WhatsApp Notification"):
+        if not mobile_number.startswith("+"):
+            st.sidebar.error("Please enter a valid mobile number with country code (e.g., +91XXXXXXXXXX)")
+        else:
+            # Replace with your actual WhatsApp API logic
+            try:
+                payload = {
+                    "to": mobile_number,
+                    "message": custom_message
+                }
+                # Example placeholder URL
+                response = requests.post("https://api.whatsapp.com/send", json=payload)
+                if response.status_code == 200:
+                    st.sidebar.success("✅ WhatsApp notification sent.")
+                else:
+                    st.sidebar.warning(f"⚠️ Failed to send. Status code: {response.status_code}")
+            except Exception as e:
+                st.sidebar.error(f"Error sending WhatsApp message: {e}")
+                
+# -------------------
 # --- Developer Options -------
 # -------------------
 st.sidebar.markdown("### 🧪 Developer Tools")
