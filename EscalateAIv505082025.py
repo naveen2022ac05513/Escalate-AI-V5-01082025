@@ -472,6 +472,10 @@ def email_polling_job():
                 issue = e["issue"]
                 customer = e["customer"]
                 sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
+                issue_hash = generate_issue_hash(issue)
+                if issue_hash in global_seen_hashes:
+                continue  # Skip duplicate
+                global_seen_hashes.add(issue_hash)
                 insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
         time.sleep(60)
 
@@ -580,6 +584,7 @@ uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
 if uploaded_file:
     df_excel = pd.read_excel(uploaded_file)
     for _, row in df_excel.iterrows():
+        issue = str(row.get("issue", ""))
         issue_summary = summarize_issue_text(issue)
         customer = str(row.get("customer", "Unknown"))
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
@@ -794,12 +799,11 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                     send_alert("Case marked as resolved.", via="email", recipient=row["owner_email"])
                     send_alert("Case marked as resolved.", via="teams", recipient=row["owner_email"])
 
-                if colB.button("🚀 Escalate to Tier 2", key=f"tier2_{row['id']}"):
-                    escalate_to_tier_2(row["id"])
-                    send_alert("Case escalated to Tier 2.", via="teams", recipient="tier2@company.com")
-
-                if colC.button("📣 Notify Manager", key=f"notify_mgr_{row['id']}"):
-                    send_alert(f"Escalation #{row['id']} needs review", via="email", recipient="manager@company.com")
+                if colB.button("🚀 Escalate to N+1", key=f"n1_{row['id']}"):
+                    send_alert("Escalated to Tier 2", via="teams", recipient="tier2@company.com")
+                
+                if colC.button("📣 Escalate to N+2", key=f"n2_{row['id']}"):
+                    send_alert("Escalated to Management", via="email", recipient="management@company.com")
 
                 st.markdown(f"**Issue:** {row['issue']}")
                 st.markdown(f"**Severity:** <span style='color:{header_color};font-weight:bold;'>{row['severity']}</span>", unsafe_allow_html=True)
