@@ -10,3 +10,4 @@ twilio>=7.0.0
 nltk>=3.8.0
 streamlit-autorefresh
 xgboost
+transformers>=4.30.0
