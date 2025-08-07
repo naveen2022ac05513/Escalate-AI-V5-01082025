@@ -557,11 +557,12 @@ uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
 if uploaded_file:
     df_excel = pd.read_excel(uploaded_file)
     for _, row in df_excel.iterrows():
+        issue = str(row.get("issue", "")).strip()
         issue_summary = summarize_issue_text(issue)
-        customer = str(row.get("customer", "Unknown"))
+        customer = str(row.get("customer", "Unknown")).strip()
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
-        #insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
-        insert_escalation(customer, issue_summary, sentiment, urgency, severity, criticality, category, escalation_flag)
+    insert_escalation(customer, issue_summary, sentiment, urgency, severity, criticality, category, escalation_flag)
+    
     st.sidebar.success("✅ File processed successfully")
 
 # 📤 Download Section
