@@ -92,6 +92,34 @@ def ensure_schema():
 # -------------------
 # --- Helper Functions -------
 # -------------------
+def analyze_issue(issue_text):
+    # Sentiment analysis
+    sentiment_score = analyzer.polarity_scores(issue_text)
+    sentiment = "neutral"
+    if sentiment_score["compound"] >= 0.3:
+        sentiment = "positive"
+    elif sentiment_score["compound"] <= -0.3:
+        sentiment = "negative"
+
+    # Keyword-based classification
+    urgency = "medium"
+    severity = "medium"
+    criticality = "medium"
+    category = "general"
+    escalation_flag = "No"
+
+    for cat, keywords in NEGATIVE_KEYWORDS.items():
+        for kw in keywords:
+            if kw in issue_text.lower():
+                category = cat
+                severity = "high"
+                urgency = "high"
+                criticality = "high"
+                escalation_flag = "Yes"
+                break  # Stop after first match
+
+    return sentiment, urgency, severity, criticality, category, escalation_flag
+    
 def summarize_issue_text(issue_text):
     clean_text = re.sub(r'\s+', ' ', issue_text).strip()
     return clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
