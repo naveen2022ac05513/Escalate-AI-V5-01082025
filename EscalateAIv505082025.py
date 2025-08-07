@@ -53,11 +53,16 @@ analyzer = SentimentIntensityAnalyzer()
 global_seen_hashes = set()
 
 NEGATIVE_KEYWORDS = {
-    "technical": ["fail", "break", "crash", "defect", "fault", "degrade", "damage", "trip", "malfunction", "blank", "shutdown", "discharge", "leak"],
-    "dissatisfaction": ["dissatisfy", "frustrate", "complain", "reject", "delay", "ignore", "escalate", "displease", "noncompliance", "neglect"],
-    "support": ["wait", "pending", "slow", "incomplete", "miss", "omit", "unresolved", "shortage", "no response"],
-    "safety": ["fire", "burn", "flashover", "arc", "explode", "unsafe", "leak", "corrode", "alarm", "incident"],
-    "business": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"]
+    #"technical": ["fail", "break", "crash", "defect", "fault", "degrade", "damage", "trip", "malfunction", "blank", "shutdown", "discharge", "leak"],
+    #"dissatisfaction": ["dissatisfy", "frustrate", "complain", "reject", "delay", "ignore", "escalate", "displease", "noncompliance", "neglect"],
+    #"support": ["wait", "pending", "slow", "incomplete", "miss", "omit", "unresolved", "shortage", "no response"],
+    #"safety": ["fire", "burn", "flashover", "arc", "explode", "unsafe", "leak", "corrode", "alarm", "incident"],
+    #"business": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"]
+    "technical": ["blank", "break", "crash", "damage", "degrade", "defect", "discharge","fail", "fault", "leak", "malfunction", "shutdown", "trip"],
+    "dissatisfaction": ["complain", "delay", "dissatisfy", "displease", "escalate", "frustrate", "ignore", "neglect", "noncompliance", "reject"],
+    "support": ["incomplete", "miss", "no response", "omit", "pending", "shortage", "slow", "unresolved", "wait"],
+    "safety": ["alarm", "arc", "burn", "corrode", "explode","fire", "flashover", "incident", "leak", "unsafe"],
+    "business": ["cancel", "downtime", "impact", "interrupt","loss", "penalty", "risk", "terminate" ]
 }
 # -------------------
 # --- DB Setup -------
