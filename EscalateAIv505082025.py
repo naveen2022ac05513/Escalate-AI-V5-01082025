@@ -375,15 +375,35 @@ if view == "Escalated":
 elif view == "Non-Escalated":
     filtered_df = filtered_df[filtered_df["escalated"] != "Yes"]
 
+tabs = st.tabs(["📊 All Escalations", "🚩 Escalated Only", "🔁 Feedback & Retraining"])
+with tabs[0]:
+# Kanban board code here
 # 📊 Kanban Board
 st.subheader("📊 Escalation Kanban Board")
+counts = df["status"].value_counts()
+open_count = counts.get("Open", 0)
+inprogress_count = counts.get("In Progress", 0)
+resolved_count = counts.get("Resolved", 0)
+
+st.markdown(f"### 📊 Status Summary")
+st.markdown(f"**🟠 Open:** {open_count} | **🔵 In Progress:** {inprogress_count} | **🟢 Resolved:** {resolved_count}")
+
 col1, col2, col3 = st.columns(3)
 for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
-    col.markdown(f"### {status}")
+   STATUS_COLORS = {
+    "Open": "#FFA500",         # Orange
+    "In Progress": "#1E90FF",  # Dodger Blue
+    "Resolved": "#32CD32"      # Lime Green
+    }
+    col.markdown(
+        f"<h3 style='background-color:{STATUS_COLORS[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>",
+        unsafe_allow_html=True
+    )
     bucket = filtered_df[filtered_df["status"] == status]
     for _, row in bucket.iterrows():
+        flag = "🚩" if row["escalated"] == "Yes" else ""
         ageing_value = compute_ageing(row["timestamp"])
-        expander_label = f"{row['id']} - {row['customer']} ⏳ {ageing_value}"
+        expander_label = f"{row['id']} - {row['customer']} {flag} ⏳ {ageing_value}"
         with col.expander(expander_label, expanded=False):
             st.markdown(f"**Issue:** {row['issue']}")
             st.markdown(f"**Severity:** {row['severity']}")
@@ -478,6 +498,13 @@ if st.sidebar.button("Send Email"):
 #     for item in new_order:
 #         update_escalation_status(item, status, "", "", "")
 
+with tabs[1]:
+    st.subheader("🚩 Escalated Issues")
+    df_esc = df[df["escalated"] == "Yes"]
+    st.dataframe(df_esc)
+
+with tabs[2]:
+# Feedback & Retraining section
 # -------------------
 # --- Feedback & Retraining -------
 # -------------------
