@@ -196,9 +196,20 @@ def ensure_schema():
 # -------------------
 # --- Helper Functions -------
 # -------------------
+
+#def summarize_issue_text(issue_text):
+#    clean_text = re.sub(r'\s+', ' ', issue_text).strip()
+#    return clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
+
+from transformers import pipeline
+summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+
 def summarize_issue_text(issue_text):
-    clean_text = re.sub(r'\s+', ' ', issue_text).strip()
-    return clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
+    try:
+        summary = summarizer(issue_text, max_length=50, min_length=10, do_sample=False)
+        return summary[0]['summary_text']
+    except Exception:
+        return issue_text[:120] + "..." if len(issue_text) > 120 else issue_text
 
 def generate_issue_hash(issue_text):
     clean_text = re.sub(r'\s+', ' ', issue_text.lower().strip())
@@ -264,6 +275,23 @@ def fetch_escalations():
         conn.close()
     return df
 
+# -------------------
+# --- ML  -------
+# -------------------
+def train_model():
+    df = fetch_escalations()
+    df = df[df["user_feedback"].notnull()]
+    if len(df) < 10:
+        return None
+
+    X = df[["severity", "urgency", "criticality"]].replace({"low": 0, "medium": 1, "high": 2})
+    y = df["user_feedback"]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+
+    model = XGBClassifier()
+    model.fit(X_train, y_train)
+    return model
+    
 # -------------------
 # --- Email Parsing -------
 # -------------------
@@ -491,16 +519,23 @@ if st.sidebar.button("Send Email"):
 # -------------------
 # --- Optional: Drag-and-Drop Kanban (Plugin) -------
 # -------------------
-# Uncomment below if using streamlit-dnd
-# pip install streamlit-dnd
 
-# from streamlit_dnd import dnd_list
-# st.subheader("🧲 Drag-and-Drop Kanban (Experimental)")
-# for status in ["Open", "In Progress", "Resolved"]:
-#     items = df[df["status"] == status]["id"].tolist()
-#     new_order = dnd_list(items, direction="vertical", title=status)
-#     for item in new_order:
-#         update_escalation_status(item, status, "", "", "")
+from streamlit_dnd import dnd_list
+
+def update_escalation_status(id, new_status):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE escalations SET status=?, status_update_date=? WHERE id=?", 
+                   (new_status, datetime.datetime.now().isoformat(), id))
+    conn.commit()
+    conn.close()
+
+st.subheader("🧲 Drag-and-Drop Kanban")
+for status in ["Open", "In Progress", "Resolved"]:
+    items = df[df["status"] == status]["id"].tolist()
+    new_order = dnd_list(items, direction="vertical", title=status)
+    for item in new_order:
+        update_escalation_status(item, status)
 
 with tabs[1]:
     st.subheader("🚩 Escalated Issues")
