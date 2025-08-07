@@ -342,8 +342,8 @@ def parse_emails():
                         issue_hash = generate_issue_hash(full_text)
 
                         # 🔍 Debug: Show hash and subject
-                        st.sidebar.write(f"📧 Subject: {subject}")
-                        st.sidebar.write(f"🔍 Hash: {issue_hash}")
+                        #st.sidebar.write(f"📧 Subject: {subject}")
+                        #st.sidebar.write(f"🔍 Hash: {issue_hash}")
 
                         if issue_hash not in global_seen_hashes:
                             global_seen_hashes.add(issue_hash)
