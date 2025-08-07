@@ -507,39 +507,47 @@ with tabs[1]:
     df_esc = df[df["escalated"] == "Yes"]
     st.dataframe(df_esc)
 
-# Feedback & Retraining section
-# -------------------
-# --- Feedback & Retraining -------
-# -------------------
 with tabs[2]:
     st.subheader("🔁 Feedback & Retraining")
+
     df_feedback = df[df["escalated"].notnull()]
     fb_map = {"Correct": 1, "Incorrect": 0}
-    for _, row in df_feedback.iterrows():
-        with st.expander(f"🆔 {row['id']}"):
-            fb = st.selectbox("Escalation Accuracy", ["Correct", "Incorrect"], key=f"fb_{row['id']}")
-            sent = st.selectbox("Sentiment", ["positive", "neutral", "negative"], key=f"sent_{row['id']}")
-            crit = st.selectbox("Criticality", ["low", "medium", "high"], key=f"crit_{row['id']}")
-            notes = st.text_area("Notes", key=f"note_{row['id']}")
-            if st.button("Submit Feedback", key=f"btn_{row['id']}"):
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute('''
-                UPDATE escalations SET user_feedback=?, sentiment=?, criticality=?, status_update_date=?
-                WHERE id=?
-                ''', (fb_map[fb], sent, crit, datetime.datetime.now().isoformat(), row['id']))
-                conn.commit()
-                conn.close()
-                st.success("Feedback saved.")
 
-# Retrain model
-            if st.button("🔁 Retrain Model"):
-               st.info("Retraining model with feedback...")
-               model = train_model()
-               if model:
-                  st.success("Model retrained successfully.")
-               else:
-                  st.warning("Not enough data to retrain model.")        
+    # 📊 Feedback Summary
+    if not df_feedback.empty and "user_feedback" in df_feedback.columns:
+        correct = df_feedback["user_feedback"].sum()
+        total = len(df_feedback)
+        st.markdown(f"**🧠 Feedback Accuracy:** {correct}/{total} correct ({(correct/total)*100:.1f}%)")
+
+    # 📝 Feedback Form per Escalation
+    for _, row in df_feedback.iterrows():
+        with st.expander(f"🆔 {row['id']} - {row['customer']}"):
+            with st.form(key=f"form_{row['id']}"):
+                fb = st.selectbox("Escalation Accuracy", ["Correct", "Incorrect"], key=f"fb_{row['id']}")
+                sent = st.selectbox("Sentiment", ["positive", "neutral", "negative"], key=f"sent_{row['id']}")
+                crit = st.selectbox("Criticality", ["low", "medium", "high"], key=f"crit_{row['id']}")
+                notes = st.text_area("Notes", key=f"note_{row['id']}")
+                submitted = st.form_submit_button("💾 Submit Feedback")
+                if submitted:
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE escalations SET user_feedback=?, sentiment=?, criticality=?, status_update_date=?
+                        WHERE id=?
+                    ''', (fb_map[fb], sent, crit, datetime.datetime.now().isoformat(), row['id']))
+                    conn.commit()
+                    conn.close()
+                    st.success("✅ Feedback saved.")
+
+    # 🔁 Retrain Model Button (outside loop)
+    st.markdown("---")
+    if st.button("🔁 Retrain Model"):
+        st.info("Retraining model with feedback...")
+        model = train_model()
+        if model:
+            st.success("✅ Model retrained successfully.")
+        else:
+            st.warning("⚠️ Not enough data to retrain model.")
 # -------------------
 # --- Developer Options -------
 # -------------------
