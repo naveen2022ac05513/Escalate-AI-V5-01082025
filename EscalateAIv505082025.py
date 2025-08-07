@@ -564,7 +564,6 @@ if uploaded_file:
         insert_escalation(customer, issue_summary, sentiment, urgency, severity, criticality, category, escalation_flag)
     st.sidebar.success("✅ File processed successfully")
 
-
 # 📤 Download Section
 st.sidebar.markdown("### 📤 Downloads")
 col1, col2 = st.sidebar.columns(2)
