@@ -13,3 +13,5 @@ xgboost
 torch>=2.0.0
 transformers>=4.30.0
 streamlit-sortables
+xlsxwriter
+
