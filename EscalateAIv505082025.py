@@ -26,6 +26,10 @@ from xgboost import XGBClassifier
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.message import EmailMessage
+import re
+import nltk
+from nltk.tokenize import sent_tokenize
+
 
 # -------------------
 # --- Config -------
@@ -201,16 +205,21 @@ def ensure_schema():
 #    clean_text = re.sub(r'\s+', ' ', issue_text).strip()
 #    return clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
 
-from transformers import pipeline
-summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
-
+nltk.download('punkt')
 def summarize_issue_text(issue_text):
-    try:
-        summary = summarizer(issue_text, max_length=50, min_length=10, do_sample=False)
-        return summary[0]['summary_text']
-    except Exception:
-        return issue_text[:120] + "..." if len(issue_text) > 120 else issue_text
+    clean_text = re.sub(r'\s+', ' ', issue_text).strip()
 
+    # Try advanced summarization
+    try:
+        from transformers import pipeline
+        summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+        summary = summarizer(clean_text, max_length=50, min_length=10, do_sample=False)
+        return summary[0]['summary_text']
+    except Exception as e:
+        # Fallback to basic sentence tokenization
+        sentences = sent_tokenize(clean_text)
+        return " ".join(sentences[:2]) if len(sentences) > 2 else clean_text
+        
 def generate_issue_hash(issue_text):
     clean_text = re.sub(r'\s+', ' ', issue_text.lower().strip())
     return hashlib.md5(clean_text.encode()).hexdigest()
