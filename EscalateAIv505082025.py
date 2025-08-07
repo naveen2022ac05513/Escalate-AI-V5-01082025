@@ -385,7 +385,7 @@ with tabs[0]:
     inprogress_count = counts.get("In Progress", 0)
     resolved_count = counts.get("Resolved", 0)
     
-    st.markdown(f"### 📊 Status Summary")
+    #st.markdown(f"### 📊 Status Summary")
     st.markdown(f"**🟠 Open:** {open_count} | **🔵 In Progress:** {inprogress_count} | **🟢 Resolved:** {resolved_count}")
     
     col1, col2, col3 = st.columns(3)
@@ -531,15 +531,15 @@ with tabs[2]:
                 conn.commit()
                 conn.close()
                 st.success("Feedback saved.")
-                # Retrain model
-                if st.button("🔁 Retrain Model"):
-                    st.info("Retraining model with feedback...")
-                    model = train_model()
-                    if model:
-                        st.success("Model retrained successfully.")
-                    else:
-                        st.warning("Not enough data to retrain model.")
 
+# Retrain model
+            if st.button("🔁 Retrain Model"):
+               st.info("Retraining model with feedback...")
+               model = train_model()
+               if model:
+                  st.success("Model retrained successfully.")
+               else:
+                  st.warning("Not enough data to retrain model.")        
 # -------------------
 # --- Developer Options -------
 # -------------------
