@@ -377,77 +377,77 @@ elif view == "Non-Escalated":
 
 tabs = st.tabs(["📊 All Escalations", "🚩 Escalated Only", "🔁 Feedback & Retraining"])
 with tabs[0]:
-# Kanban board code here
-# 📊 Kanban Board
-st.subheader("📊 Escalation Kanban Board")
-counts = df["status"].value_counts()
-open_count = counts.get("Open", 0)
-inprogress_count = counts.get("In Progress", 0)
-resolved_count = counts.get("Resolved", 0)
-
-st.markdown(f"### 📊 Status Summary")
-st.markdown(f"**🟠 Open:** {open_count} | **🔵 In Progress:** {inprogress_count} | **🟢 Resolved:** {resolved_count}")
-
-col1, col2, col3 = st.columns(3)
-for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
-   STATUS_COLORS = {
-    "Open": "#FFA500",         # Orange
-    "In Progress": "#1E90FF",  # Dodger Blue
-    "Resolved": "#32CD32"      # Lime Green
-    }
-    col.markdown(
-        f"<h3 style='background-color:{STATUS_COLORS[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>",
-        unsafe_allow_html=True
-    )
-    bucket = filtered_df[filtered_df["status"] == status]
-    for _, row in bucket.iterrows():
-        flag = "🚩" if row["escalated"] == "Yes" else ""
-        ageing_value = compute_ageing(row["timestamp"])
-        expander_label = f"{row['id']} - {row['customer']} {flag} ⏳ {ageing_value}"
-        with col.expander(expander_label, expanded=False):
-            st.markdown(f"**Issue:** {row['issue']}")
-            st.markdown(f"**Severity:** {row['severity']}")
-            st.markdown(f"**Urgency:** {row['urgency']}")
-            st.markdown(f"**Criticality:** {row['criticality']}")
-            st.markdown(f"**Category:** {row['category']}")
-            st.markdown(f"**Sentiment:** {row['sentiment']}")
-            st.markdown(f"**Escalated:** {row['escalated']}")
-            st.markdown(f"**Location:** {row.get('location', '')}")
-            st.markdown(f"**Region:** {row.get('region', '')}")
-            st.markdown(f"**Activity:** {row.get('activity', '')}")
-
-            # Editable fields
-            new_status = st.selectbox(
-                "Update Status",
-                ["Open", "In Progress", "Resolved"],
-                index=["Open", "In Progress", "Resolved"].index(row["status"]),
-                key=f"status_select_{row['id']}"
-            )
-            
-            new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
-            new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
-            new_owner_email = st.text_input("Owner Email", row.get("action_owner", ""), key=f"email_{row['id']}")
-            location = st.text_input("Location", row.get("location", ""), key=f"loc_{row['id']}")
-            region = st.text_input("Region", row.get("region", ""), key=f"reg_{row['id']}")
-            activity = st.text_input("Activity", row.get("activity", ""), key=f"act_{row['id']}")
-
-            if st.button("💾 Save Changes", key=f"save_{row['id']}"):
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute('''
-                UPDATE escalations SET status=?, action_taken=?, owner=?, action_owner=?, location=?, region=?, activity=?, status_update_date=?
-                WHERE id=?
-                ''', (new_status, new_action, new_owner, new_owner_email, location, region, activity, datetime.datetime.now().isoformat(), row['id']))
-                conn.commit()
-                conn.close()
-                st.success("Escalation updated.")
-                send_alert(f"🔔 Escalation {row['id']} updated.", via="email", recipient=new_owner_email)
-
-            # Escalation actions
-            if st.button("🚀 Escalate to N+1", key=f"n1_{row['id']}"):
-                send_alert(f"Escalation #{row['id']} moved to Tier 2", via="teams", recipient="tier2@company.com")
-            if st.button("📣 Escalate to N+2", key=f"n2_{row['id']}"):
-                send_alert(f"Escalation #{row['id']} escalated to Management", via="email", recipient="management@company.com")
+    # Kanban board code here
+    # 📊 Kanban Board
+    st.subheader("📊 Escalation Kanban Board")
+    counts = df["status"].value_counts()
+    open_count = counts.get("Open", 0)
+    inprogress_count = counts.get("In Progress", 0)
+    resolved_count = counts.get("Resolved", 0)
+    
+    st.markdown(f"### 📊 Status Summary")
+    st.markdown(f"**🟠 Open:** {open_count} | **🔵 In Progress:** {inprogress_count} | **🟢 Resolved:** {resolved_count}")
+    
+    col1, col2, col3 = st.columns(3)
+    for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
+       STATUS_COLORS = {
+        "Open": "#FFA500",         # Orange
+        "In Progress": "#1E90FF",  # Dodger Blue
+        "Resolved": "#32CD32"      # Lime Green
+        }
+        col.markdown(
+            f"<h3 style='background-color:{STATUS_COLORS[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>",
+            unsafe_allow_html=True
+        )
+        bucket = filtered_df[filtered_df["status"] == status]
+        for _, row in bucket.iterrows():
+            flag = "🚩" if row["escalated"] == "Yes" else ""
+            ageing_value = compute_ageing(row["timestamp"])
+            expander_label = f"{row['id']} - {row['customer']} {flag} ⏳ {ageing_value}"
+            with col.expander(expander_label, expanded=False):
+                st.markdown(f"**Issue:** {row['issue']}")
+                st.markdown(f"**Severity:** {row['severity']}")
+                st.markdown(f"**Urgency:** {row['urgency']}")
+                st.markdown(f"**Criticality:** {row['criticality']}")
+                st.markdown(f"**Category:** {row['category']}")
+                st.markdown(f"**Sentiment:** {row['sentiment']}")
+                st.markdown(f"**Escalated:** {row['escalated']}")
+                st.markdown(f"**Location:** {row.get('location', '')}")
+                st.markdown(f"**Region:** {row.get('region', '')}")
+                st.markdown(f"**Activity:** {row.get('activity', '')}")
+    
+                # Editable fields
+                new_status = st.selectbox(
+                    "Update Status",
+                    ["Open", "In Progress", "Resolved"],
+                    index=["Open", "In Progress", "Resolved"].index(row["status"]),
+                    key=f"status_select_{row['id']}"
+                )
+                
+                new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
+                new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
+                new_owner_email = st.text_input("Owner Email", row.get("action_owner", ""), key=f"email_{row['id']}")
+                location = st.text_input("Location", row.get("location", ""), key=f"loc_{row['id']}")
+                region = st.text_input("Region", row.get("region", ""), key=f"reg_{row['id']}")
+                activity = st.text_input("Activity", row.get("activity", ""), key=f"act_{row['id']}")
+    
+                if st.button("💾 Save Changes", key=f"save_{row['id']}"):
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                    UPDATE escalations SET status=?, action_taken=?, owner=?, action_owner=?, location=?, region=?, activity=?, status_update_date=?
+                    WHERE id=?
+                    ''', (new_status, new_action, new_owner, new_owner_email, location, region, activity, datetime.datetime.now().isoformat(), row['id']))
+                    conn.commit()
+                    conn.close()
+                    st.success("Escalation updated.")
+                    send_alert(f"🔔 Escalation {row['id']} updated.", via="email", recipient=new_owner_email)
+    
+                # Escalation actions
+                if st.button("🚀 Escalate to N+1", key=f"n1_{row['id']}"):
+                    send_alert(f"Escalation #{row['id']} moved to Tier 2", via="teams", recipient="tier2@company.com")
+                if st.button("📣 Escalate to N+2", key=f"n2_{row['id']}"):
+                    send_alert(f"Escalation #{row['id']} escalated to Management", via="email", recipient="management@company.com")
 
 # -------------------
 # --- SLA Monitoring -------
