@@ -267,42 +267,73 @@ def fetch_escalations():
 # -------------------
 # --- Email Parsing -------
 # -------------------
+
 def parse_emails():
     emails = []
+
     try:
+        # ✅ Step 1: Connect to IMAP
         conn = imaplib.IMAP4_SSL(EMAIL_SERVER)
         conn.login(EMAIL_USER, EMAIL_PASS)
+        st.sidebar.success("✅ IMAP login successful")
+
+        # 📥 Step 2: Select inbox and search for unread emails
         conn.select("inbox")
         _, messages = conn.search(None, "UNSEEN")
+
+        if not messages or not messages[0]:
+            st.sidebar.info("📭 No unread emails found.")
+            conn.logout()
+            return []
+
+        # 📨 Step 3: Loop through unread emails
         for num in messages[0].split():
-            _, msg_data = conn.fetch(num, "(RFC822)")
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    subject = decode_header(msg["Subject"])[0][0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode(errors='ignore')
-                    from_ = msg.get("From")
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            if part.get_content_type() == "text/plain":
-                                body = part.get_payload(decode=True).decode(errors='ignore')
-                                break
-                    else:
-                        body = msg.get_payload(decode=True).decode(errors='ignore')
-                    full_text = f"{subject} - {body}"
-                    issue_hash = generate_issue_hash(full_text)
-                    if issue_hash not in global_seen_hashes:
-                        global_seen_hashes.add(issue_hash)
-                        summary = summarize_issue_text(full_text)
-                        emails.append({
-                            "customer": from_,
-                            "issue": summary
-                        })
+            try:
+                _, msg_data = conn.fetch(num, "(RFC822)")
+                for response_part in msg_data:
+                    if isinstance(response_part, tuple):
+                        msg = email.message_from_bytes(response_part[1])
+
+                        # Decode subject
+                        subject = decode_header(msg["Subject"])[0][0]
+                        if isinstance(subject, bytes):
+                            subject = subject.decode(errors='ignore')
+                        from_ = msg.get("From")
+
+                        # Extract body
+                        body = ""
+                        if msg.is_multipart():
+                            for part in msg.walk():
+                                if part.get_content_type() == "text/plain":
+                                    body = part.get_payload(decode=True).decode(errors='ignore')
+                                    break
+                        else:
+                            body = msg.get_payload(decode=True).decode(errors='ignore')
+
+                        full_text = f"{subject} - {body}"
+                        issue_hash = generate_issue_hash(full_text)
+
+                        # 🔍 Debug: Show hash and subject
+                        st.sidebar.write(f"📧 Subject: {subject}")
+                        st.sidebar.write(f"🔍 Hash: {issue_hash}")
+
+                        if issue_hash not in global_seen_hashes:
+                            global_seen_hashes.add(issue_hash)
+                            summary = summarize_issue_text(full_text)
+                            emails.append({
+                                "customer": from_,
+                                "issue": summary
+                            })
+                        else:
+                            st.sidebar.info(f"⛔ Duplicate email skipped: {subject}")
+            except Exception as e:
+                st.sidebar.warning(f"⚠️ Failed to parse email #{num.decode()}: {e}")
+
         conn.logout()
+
     except Exception as e:
-        st.error(f"Failed to parse emails: {e}")
+        st.sidebar.error(f"❌ IMAP connection failed: {e}")
+
     return emails
 
 # -------------------
