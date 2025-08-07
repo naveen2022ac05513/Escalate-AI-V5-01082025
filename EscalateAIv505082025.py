@@ -26,10 +26,6 @@ from xgboost import XGBClassifier
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.message import EmailMessage
-import re
-import nltk
-from nltk.tokenize import sent_tokenize
-
 
 # -------------------
 # --- Config -------
@@ -53,16 +49,11 @@ analyzer = SentimentIntensityAnalyzer()
 global_seen_hashes = set()
 
 NEGATIVE_KEYWORDS = {
-    #"technical": ["fail", "break", "crash", "defect", "fault", "degrade", "damage", "trip", "malfunction", "blank", "shutdown", "discharge", "leak"],
-    #"dissatisfaction": ["dissatisfy", "frustrate", "complain", "reject", "delay", "ignore", "escalate", "displease", "noncompliance", "neglect"],
-    #"support": ["wait", "pending", "slow", "incomplete", "miss", "omit", "unresolved", "shortage", "no response"],
-    #"safety": ["fire", "burn", "flashover", "arc", "explode", "unsafe", "leak", "corrode", "alarm", "incident"],
-    #"business": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"]
-    "technical": ["blank", "break", "crash", "damage", "degrade", "defect", "discharge","fail", "fault", "leak", "malfunction", "shutdown", "trip"],
-    "dissatisfaction": ["complain", "delay", "dissatisfy", "displease", "escalate", "frustrate", "ignore", "neglect", "noncompliance", "reject"],
-    "support": ["incomplete", "miss", "no response", "omit", "pending", "shortage", "slow", "unresolved", "wait"],
-    "safety": ["alarm", "arc", "burn", "corrode", "explode","fire", "flashover", "incident", "leak", "unsafe"],
-    "business": ["cancel", "downtime", "impact", "interrupt","loss", "penalty", "risk", "terminate" ]
+    "technical": ["fail", "break", "crash", "defect", "fault", "degrade", "damage", "trip", "malfunction", "blank", "shutdown", "discharge", "leak"],
+    "dissatisfaction": ["dissatisfy", "frustrate", "complain", "reject", "delay", "ignore", "escalate", "displease", "noncompliance", "neglect"],
+    "support": ["wait", "pending", "slow", "incomplete", "miss", "omit", "unresolved", "shortage", "no response"],
+    "safety": ["fire", "burn", "flashover", "arc", "explode", "unsafe", "leak", "corrode", "alarm", "incident"],
+    "business": ["impact", "loss", "risk", "downtime", "interrupt", "cancel", "terminate", "penalty"]
 }
 # -------------------
 # --- DB Setup -------
@@ -109,33 +100,6 @@ def generate_issue_hash(issue_text):
     clean_text = re.sub(r'\s+', ' ', issue_text.lower().strip())
     return hashlib.md5(clean_text.encode()).hexdigest()
 
-def analyze_issue(issue_text):
-    issue_text = issue_text.lower()
-    sentiment_score = analyzer.polarity_scores(issue_text)["compound"]
-    sentiment = (
-        "positive" if sentiment_score > 0.3 else
-        "negative" if sentiment_score < -0.3 else
-        "neutral"
-    )
-
-    urgency = "low"
-    severity = "low"
-    criticality = "low"
-    category = "general"
-    escalation_flag = "No"
-
-    for cat, keywords in NEGATIVE_KEYWORDS.items():
-        for kw in keywords:
-            if kw in issue_text:
-                category = cat
-                severity = "high"
-                urgency = "high"
-                criticality = "high"
-                escalation_flag = "Yes"
-                break
-
-    return sentiment, urgency, severity, criticality, category, escalation_flag
-    
 def compute_ageing(ts):
     if not ts or pd.isnull(ts):
         return "00:00"
@@ -232,26 +196,10 @@ def ensure_schema():
 # -------------------
 # --- Helper Functions -------
 # -------------------
-
-#def summarize_issue_text(issue_text):
-#    clean_text = re.sub(r'\s+', ' ', issue_text).strip()
-#    return clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
-
-nltk.download('punkt')
 def summarize_issue_text(issue_text):
     clean_text = re.sub(r'\s+', ' ', issue_text).strip()
+    return clean_text[:120] + "..." if len(clean_text) > 120 else clean_text
 
-    # Try advanced summarization
-    try:
-        from transformers import pipeline
-        summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
-        summary = summarizer(clean_text, max_length=50, min_length=10, do_sample=False)
-        return summary[0]['summary_text']
-    except Exception as e:
-        # Fallback to basic sentence tokenization
-        sentences = sent_tokenize(clean_text)
-        return " ".join(sentences[:2]) if len(sentences) > 2 else clean_text
-        
 def generate_issue_hash(issue_text):
     clean_text = re.sub(r'\s+', ' ', issue_text.lower().strip())
     return hashlib.md5(clean_text.encode()).hexdigest()
@@ -317,23 +265,6 @@ def fetch_escalations():
     return df
 
 # -------------------
-# --- ML  -------
-# -------------------
-def train_model():
-    df = fetch_escalations()
-    df = df[df["user_feedback"].notnull()]
-    if len(df) < 10:
-        return None
-
-    X = df[["severity", "urgency", "criticality"]].replace({"low": 0, "medium": 1, "high": 2})
-    y = df["user_feedback"]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-
-    model = XGBClassifier()
-    model.fit(X_train, y_train)
-    return model
-    
-# -------------------
 # --- Email Parsing -------
 # -------------------
 def parse_emails():
@@ -398,7 +329,7 @@ def process_uploaded_excel(uploaded_file):
 # -------------------
 ensure_schema()
 st.set_page_config(layout="wide", page_title="EscalateAI", page_icon="🚨")
-st.markdown("<h1>🚨 EscalateAI – AI Based Escalation Prediction and Management Tool </h1>", unsafe_allow_html=True)
+st.markdown("<h1>🚨 EscalateAI – Enhanced Escalation Management</h1>", unsafe_allow_html=True)
 
 # Theme toggle
 theme = st.sidebar.radio("Theme", ["Light", "Dark"])
@@ -557,6 +488,20 @@ if st.sidebar.button("Send Email"):
     send_alert(manual_msg, via="email")
     st.sidebar.success("✅ Email alert sent")
 
+# -------------------
+# --- Optional: Drag-and-Drop Kanban (Plugin) -------
+# -------------------
+# Uncomment below if using streamlit-dnd
+# pip install streamlit-dnd
+
+# from streamlit_dnd import dnd_list
+# st.subheader("🧲 Drag-and-Drop Kanban (Experimental)")
+# for status in ["Open", "In Progress", "Resolved"]:
+#     items = df[df["status"] == status]["id"].tolist()
+#     new_order = dnd_list(items, direction="vertical", title=status)
+#     for item in new_order:
+#         update_escalation_status(item, status, "", "", "")
+
 with tabs[1]:
     st.subheader("🚩 Escalated Issues")
     df_esc = df[df["escalated"] == "Yes"]
@@ -608,7 +553,6 @@ with tabs[2]:
             st.success("✅ Model retrained successfully.")
         else:
             st.warning("⚠️ Not enough data to retrain model.")
-
 # -------------------
 # --- Developer Options -------
 # -------------------
@@ -622,80 +566,3 @@ if st.sidebar.button("🗑️ Reset Database"):
     cursor.execute("DROP TABLE IF EXISTS escalations")
     conn.commit()
     conn
-    # -------------------
-# 📤 Excel Downloads
-# -------------------
-st.sidebar.markdown("### 📤 Download Data")
-
-df_all = fetch_escalations()
-
-# Separate complaints and escalations
-df_complaints = df_all[df_all["escalated"] != "Yes"]
-df_escalated = df_all[df_all["escalated"] == "Yes"]
-
-def convert_df_to_excel(df):
-    import io
-    from pandas import ExcelWriter
-
-    output = io.BytesIO()
-    with ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Sheet1')
-    processed_data = output.getvalue()
-    return processed_data
-
-# Download Complaints
-complaints_excel = convert_df_to_excel(df_complaints)
-st.sidebar.download_button(
-    label="📥 Download Complaints",
-    data=complaints_excel,
-    file_name="complaints.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-
-# Download Escalations
-escalations_excel = convert_df_to_excel(df_escalated)
-st.sidebar.download_button(
-    label="📥 Download Escalations",
-    data=escalations_excel,
-    file_name="escalations.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-
-# -------------------
-# 📲 WhatsApp Notification
-# -------------------
-st.sidebar.markdown("### 📲 WhatsApp Notification for Resolved Escalations")
-
-# Filter resolved escalations
-df_resolved = df[df["status"] == "Resolved"]
-
-if df_resolved.empty:
-    st.sidebar.info("No resolved escalations available.")
-else:
-    selected_id = st.sidebar.selectbox(
-        "Select Resolved Escalation",
-        df_resolved["id"].tolist()
-    )
-
-    mobile_number = st.sidebar.text_input("📞 Mobile Number (with country code)", placeholder="+91XXXXXXXXXX")
-    custom_message = st.sidebar.text_area("📝 Custom Message", f"Escalation {selected_id} has been resolved.")
-
-    if st.sidebar.button("Send WhatsApp Notification"):
-        if not mobile_number.startswith("+"):
-            st.sidebar.error("Please enter a valid mobile number with country code (e.g., +91XXXXXXXXXX)")
-        else:
-            # Replace with your actual WhatsApp API logic
-            try:
-                payload = {
-                    "to": mobile_number,
-                    "message": custom_message
-                }
-                # Example placeholder URL
-                response = requests.post("https://api.whatsapp.com/send", json=payload)
-                if response.status_code == 200:
-                    st.sidebar.success("✅ WhatsApp notification sent.")
-                else:
-                    st.sidebar.warning(f"⚠️ Failed to send. Status code: {response.status_code}")
-            except Exception as e:
-                st.sidebar.error(f"Error sending WhatsApp message: {e}")
-                
