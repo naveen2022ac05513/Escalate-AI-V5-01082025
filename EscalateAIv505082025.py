@@ -398,12 +398,12 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
 
             # Editable fields
             new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row["status"]))
-            new_action = st.text_input("Action Taken", row.get("action_taken", ""))
-            new_owner = st.text_input("Owner", row.get("owner", ""))
-            new_owner_email = st.text_input("Owner Email", row.get("action_owner", ""))
-            location = st.text_input("Location", row.get("location", ""))
-            region = st.text_input("Region", row.get("region", ""))
-            activity = st.text_input("Activity", row.get("activity", ""))
+            new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
+            new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
+            new_owner_email = st.text_input("Owner Email", row.get("action_owner", ""), key=f"email_{row['id']}")
+            location = st.text_input("Location", row.get("location", ""), key=f"loc_{row['id']}")
+            region = st.text_input("Region", row.get("region", ""), key=f"reg_{row['id']}")
+            activity = st.text_input("Activity", row.get("activity", ""), key=f"act_{row['id']}")
 
             if st.button("💾 Save Changes", key=f"save_{row['id']}"):
                 conn = sqlite3.connect(DB_PATH)
