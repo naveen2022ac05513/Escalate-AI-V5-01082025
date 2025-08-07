@@ -517,8 +517,13 @@ with tabs[2]:
     if not df_feedback.empty and "user_feedback" in df_feedback.columns:
         correct = df_feedback["user_feedback"].sum()
         total = len(df_feedback)
-        st.markdown(f"**🧠 Feedback Accuracy:** {correct}/{total} correct ({(correct/total)*100:.1f}%)")
-
+        #st.markdown(f"**🧠 Feedback Accuracy:** {correct}/{total} correct ({(correct/total)*100:.1f}%)")
+        if total and isinstance(correct, (int, float)):
+            accuracy = (correct / total) * 100
+                st.markdown(f"**🧠 Feedback Accuracy:** {correct}/{total} correct ({accuracy:.1f}%)")
+            else:
+                st.markdown("**🧠 Feedback Accuracy:** Data unavailable or invalid.")
+                
     # 📝 Feedback Form per Escalation
     for _, row in df_feedback.iterrows():
         with st.expander(f"🆔 {row['id']} - {row['customer']}"):
