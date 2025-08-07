@@ -531,15 +531,14 @@ with tabs[2]:
                 conn.commit()
                 conn.close()
                 st.success("Feedback saved.")
-
-# Retrain model
-if st.button("🔁 Retrain Model"):
-    st.info("Retraining model with feedback...")
-    model = train_model()
-    if model:
-        st.success("Model retrained successfully.")
-    else:
-        st.warning("Not enough data to retrain model.")
+                # Retrain model
+                if st.button("🔁 Retrain Model"):
+                    st.info("Retraining model with feedback...")
+                    model = train_model()
+                    if model:
+                        st.success("Model retrained successfully.")
+                    else:
+                        st.warning("Not enough data to retrain model.")
 
 # -------------------
 # --- Developer Options -------
