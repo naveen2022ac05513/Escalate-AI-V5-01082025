@@ -187,7 +187,37 @@ def fetch_escalations():
     finally:
         conn.close()
     return df
-    # -------------------
+def send_alert(message, via="email", recipient=None):
+    try:
+        if via == "email":
+            if not recipient:
+                recipient = ALERT_RECIPIENT
+            msg = EmailMessage()
+            msg.set_content(message)
+            msg["Subject"] = EMAIL_SUBJECT
+            msg["From"] = EMAIL_USER
+            msg["To"] = recipient
+
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                server.starttls()
+                server.login(EMAIL_USER, EMAIL_PASS)
+                server.send_message(msg)
+
+        elif via == "teams":
+            if not TEAMS_WEBHOOK:
+                st.warning("⚠️ MS Teams webhook URL not configured.")
+                return
+            payload = {"text": message}
+            response = requests.post(TEAMS_WEBHOOK, json=payload)
+            if response.status_code != 200:
+                st.warning(f"⚠️ Teams alert failed: {response.status_code}")
+
+        else:
+            st.warning(f"⚠️ Unknown alert channel: {via}")
+
+    except Exception as e:
+        st.error(f"❌ Failed to send alert: {e}")
+# -------------------
 # --- DB Setup -------
 # -------------------
 def ensure_schema():
