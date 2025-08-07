@@ -397,7 +397,13 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
             st.markdown(f"**Activity:** {row.get('activity', '')}")
 
             # Editable fields
-            new_status = st.selectbox("Update Status", ["Open", "In Progress", "Resolved"], index=["Open", "In Progress", "Resolved"].index(row["status"]))
+            new_status = st.selectbox(
+                "Update Status",
+                ["Open", "In Progress", "Resolved"],
+                index=["Open", "In Progress", "Resolved"].index(row["status"]),
+                key=f"status_select_{row['id']}"
+            )
+            
             new_action = st.text_input("Action Taken", row.get("action_taken", ""), key=f"action_{row['id']}")
             new_owner = st.text_input("Owner", row.get("owner", ""), key=f"owner_{row['id']}")
             new_owner_email = st.text_input("Owner Email", row.get("action_owner", ""), key=f"email_{row['id']}")
