@@ -525,36 +525,6 @@ if st.sidebar.button("Send Email"):
     send_alert(manual_msg, via="email")
     st.sidebar.success("✅ Email alert sent")
 
-# -------------------
-# --- Optional: Drag-and-Drop Kanban (Plugin) -------
-# -------------------
-
-from streamlit_sortables import sort_items
-
-st.subheader("🧲 Drag-and-Drop Kanban")
-
-status_columns = st.columns(3)
-status_labels = ["Open", "In Progress", "Resolved"]
-status_colors = {
-    "Open": "#FFA500",
-    "In Progress": "#1E90FF",
-    "Resolved": "#32CD32"
-}
-
-for i, status in enumerate(status_labels):
-    with status_columns[i]:
-        st.markdown(
-            f"<h3 style='background-color:{status_colors[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>",
-            unsafe_allow_html=True
-        )
-        bucket = df[df["status"] == status]
-        items = [
-            f"{row['id']} - {row['customer']} ⏳ {compute_ageing(row['timestamp'])}"
-            for _, row in bucket.iterrows()
-        ]
-        sorted_items = sort_items(items, direction="vertical", key=f"sortable_{status}")
-        st.write("New order:", sorted_items)
-
 with tabs[1]:
     st.subheader("🚩 Escalated Issues")
     df_esc = df[df["escalated"] == "Yes"]
