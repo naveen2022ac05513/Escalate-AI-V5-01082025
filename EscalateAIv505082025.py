@@ -507,14 +507,14 @@ with tabs[1]:
     df_esc = df[df["escalated"] == "Yes"]
     st.dataframe(df_esc)
 
-with tabs[2]:
 # Feedback & Retraining section
 # -------------------
 # --- Feedback & Retraining -------
 # -------------------
-st.subheader("🔁 Feedback & Retraining")
-df_feedback = df[df["escalated"].notnull()]
-fb_map = {"Correct": 1, "Incorrect": 0}
+with tabs[2]:
+    st.subheader("🔁 Feedback & Retraining")
+    df_feedback = df[df["escalated"].notnull()]
+    fb_map = {"Correct": 1, "Incorrect": 0}
 
 for _, row in df_feedback.iterrows():
     with st.expander(f"🆔 {row['id']}"):
