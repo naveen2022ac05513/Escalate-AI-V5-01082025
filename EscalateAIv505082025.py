@@ -104,6 +104,33 @@ def generate_issue_hash(issue_text):
     clean_text = re.sub(r'\s+', ' ', issue_text.lower().strip())
     return hashlib.md5(clean_text.encode()).hexdigest()
 
+def analyze_issue(issue_text):
+    issue_text = issue_text.lower()
+    sentiment_score = analyzer.polarity_scores(issue_text)["compound"]
+    sentiment = (
+        "positive" if sentiment_score > 0.3 else
+        "negative" if sentiment_score < -0.3 else
+        "neutral"
+    )
+
+    urgency = "low"
+    severity = "low"
+    criticality = "low"
+    category = "general"
+    escalation_flag = "No"
+
+    for cat, keywords in NEGATIVE_KEYWORDS.items():
+        for kw in keywords:
+            if kw in issue_text:
+                category = cat
+                severity = "high"
+                urgency = "high"
+                criticality = "high"
+                escalation_flag = "Yes"
+                break
+
+    return sentiment, urgency, severity, criticality, category, escalation_flag
+    
 def compute_ageing(ts):
     if not ts or pd.isnull(ts):
         return "00:00"
