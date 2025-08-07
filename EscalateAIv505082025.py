@@ -576,6 +576,7 @@ with tabs[2]:
             st.success("✅ Model retrained successfully.")
         else:
             st.warning("⚠️ Not enough data to retrain model.")
+
 # -------------------
 # --- Developer Options -------
 # -------------------
@@ -589,3 +590,41 @@ if st.sidebar.button("🗑️ Reset Database"):
     cursor.execute("DROP TABLE IF EXISTS escalations")
     conn.commit()
     conn
+    # -------------------
+# 📤 Excel Downloads
+# -------------------
+st.sidebar.markdown("### 📤 Download Data")
+
+df_all = fetch_escalations()
+
+# Separate complaints and escalations
+df_complaints = df_all[df_all["escalated"] != "Yes"]
+df_escalated = df_all[df_all["escalated"] == "Yes"]
+
+def convert_df_to_excel(df):
+    import io
+    from pandas import ExcelWriter
+
+    output = io.BytesIO()
+    with ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    processed_data = output.getvalue()
+    return processed_data
+
+# Download Complaints
+complaints_excel = convert_df_to_excel(df_complaints)
+st.sidebar.download_button(
+    label="📥 Download Complaints",
+    data=complaints_excel,
+    file_name="complaints.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+# Download Escalations
+escalations_excel = convert_df_to_excel(df_escalated)
+st.sidebar.download_button(
+    label="📥 Download Escalations",
+    data=escalations_excel,
+    file_name="escalations.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
