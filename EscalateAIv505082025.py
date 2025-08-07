@@ -389,22 +389,26 @@ with tabs[0]:
     st.markdown(f"**🟠 Open:** {open_count} | **🔵 In Progress:** {inprogress_count} | **🟢 Resolved:** {resolved_count}")
     
     col1, col2, col3 = st.columns(3)
-    for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
-       STATUS_COLORS = {
+for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
+    STATUS_COLORS = {
         "Open": "#FFA500",         # Orange
         "In Progress": "#1E90FF",  # Dodger Blue
         "Resolved": "#32CD32"      # Lime Green
-        }
-        col.markdown(
-            f"<h3 style='background-color:{STATUS_COLORS[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>",
-            unsafe_allow_html=True
-        )
-        bucket = filtered_df[filtered_df["status"] == status]
-        for _, row in bucket.iterrows():
-            flag = "🚩" if row["escalated"] == "Yes" else ""
-            ageing_value = compute_ageing(row["timestamp"])
-            expander_label = f"{row['id']} - {row['customer']} {flag} ⏳ {ageing_value}"
-            with col.expander(expander_label, expanded=False):
+    }
+
+    col.markdown(
+        f"<h3 style='background-color:{STATUS_COLORS[status]};color:white;padding:8px;border-radius:5px;text-align:center;'>{status}</h3>",
+        unsafe_allow_html=True
+    )
+
+    bucket = filtered_df[filtered_df["status"] == status]
+    for _, row in bucket.iterrows():
+        flag = "🚩" if row["escalated"] == "Yes" else ""
+        ageing_value = compute_ageing(row["timestamp"])
+        expander_label = f"{row['id']} - {row['customer']} {flag} ⏳ {ageing_value}"
+
+        with col.expander(expander_label, expanded=False):
+            # Your existing card content goes here
                 st.markdown(f"**Issue:** {row['issue']}")
                 st.markdown(f"**Severity:** {row['severity']}")
                 st.markdown(f"**Urgency:** {row['urgency']}")
