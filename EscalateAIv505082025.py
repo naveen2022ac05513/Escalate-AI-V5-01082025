@@ -660,3 +660,42 @@ st.sidebar.download_button(
     file_name="escalations.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+
+# -------------------
+# 📲 WhatsApp Notification
+# -------------------
+st.sidebar.markdown("### 📲 WhatsApp Notification for Resolved Escalations")
+
+# Filter resolved escalations
+df_resolved = df[df["status"] == "Resolved"]
+
+if df_resolved.empty:
+    st.sidebar.info("No resolved escalations available.")
+else:
+    selected_id = st.sidebar.selectbox(
+        "Select Resolved Escalation",
+        df_resolved["id"].tolist()
+    )
+
+    mobile_number = st.sidebar.text_input("📞 Mobile Number (with country code)", placeholder="+91XXXXXXXXXX")
+    custom_message = st.sidebar.text_area("📝 Custom Message", f"Escalation {selected_id} has been resolved.")
+
+    if st.sidebar.button("Send WhatsApp Notification"):
+        if not mobile_number.startswith("+"):
+            st.sidebar.error("Please enter a valid mobile number with country code (e.g., +91XXXXXXXXXX)")
+        else:
+            # Replace with your actual WhatsApp API logic
+            try:
+                payload = {
+                    "to": mobile_number,
+                    "message": custom_message
+                }
+                # Example placeholder URL
+                response = requests.post("https://api.whatsapp.com/send", json=payload)
+                if response.status_code == 200:
+                    st.sidebar.success("✅ WhatsApp notification sent.")
+                else:
+                    st.sidebar.warning(f"⚠️ Failed to send. Status code: {response.status_code}")
+            except Exception as e:
+                st.sidebar.error(f"Error sending WhatsApp message: {e}")
+                
