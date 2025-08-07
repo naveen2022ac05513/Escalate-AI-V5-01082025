@@ -366,7 +366,7 @@ def process_uploaded_excel(uploaded_file):
 # -------------------
 ensure_schema()
 st.set_page_config(layout="wide", page_title="EscalateAI", page_icon="🚨")
-st.markdown("<h1>🚨 EscalateAI – Enhanced Escalation Management</h1>", unsafe_allow_html=True)
+st.markdown("<h1>🚨 EscalateAI – AI Based Escalation Prediction and Management Tool </h1>", unsafe_allow_html=True)
 
 # Theme toggle
 theme = st.sidebar.radio("Theme", ["Light", "Dark"])
