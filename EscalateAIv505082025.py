@@ -195,20 +195,31 @@ def fetch_escalations():
     return df
 
 
-def update_escalation_status(esc_id, status, action_taken, action_owner, feedback=None):
+def update_escalation_status(esc_id, status, action_taken, action_owner, feedback=None, sentiment=None, criticality=None, notes=None):
     """
-    Update an escalation’s status, action taken, owner, and optionally user feedback.
-    This is used when users update details on the Kanban board or provide feedback.
+    Update an escalation’s status, action taken, owner, feedback, sentiment, and criticality.
+    Also logs the status update timestamp and user notes.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         UPDATE escalations
-        SET status = ?, action_taken = ?, action_owner = ?, status_update_date = ?, user_feedback = ?
+        SET status = ?, action_taken = ?, action_owner = ?, status_update_date = ?, 
+            user_feedback = ?, sentiment = ?, criticality = ?
         WHERE id = ?
-    ''', (status, action_taken, action_owner, datetime.datetime.now().isoformat(), feedback, esc_id))
+    ''', (
+        status,
+        action_taken,
+        action_owner,
+        datetime.datetime.now().isoformat(),
+        notes,
+        sentiment,
+        criticality,
+        esc_id
+    ))
     conn.commit()
     conn.close()
+
 
 
 # --------------------
