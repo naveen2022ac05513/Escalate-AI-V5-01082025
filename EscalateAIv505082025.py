@@ -843,7 +843,7 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                 
                 # 🚀 Escalate to N+1
                 n1_email = colB.text_input("N+1 Email", key=f"n1email_{row['id']}")
-                if colB.button("🚀 Escalate to N+1", key=f"n1btn_{row['id']}"):
+                if colC.button("🚀 Escalate to N+1", key=f"n1btn_{row['id']}"):
                     update_escalation_status(
                         row['id'],
                         "Escalated",
