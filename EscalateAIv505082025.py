@@ -555,8 +555,13 @@ st.sidebar.markdown("""
 import pandas as pd
 import streamlit as st
 
-# === 1. Upload and Read Excel ===
-uploaded_file = st.file_uploader("📄 Upload Excel File", type=["xlsx"])
+import pandas as pd
+import streamlit as st
+
+# === 1. Upload Excel File from Sidebar ===
+st.sidebar.header("📁 Upload Escalation Sheet")
+uploaded_file = st.sidebar.file_uploader("Choose an Excel file", type=["xlsx"])
+
 if uploaded_file:
     try:
         df_excel = pd.read_excel(uploaded_file)
@@ -598,7 +603,6 @@ if uploaded_file:
         )
 
     st.sidebar.success("🎯 All valid rows processed successfully.")
-
 # 📤 Download Section
 st.sidebar.markdown("### 📤 Downloads")
 col1, col2 = st.sidebar.columns(2)
