@@ -799,7 +799,7 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
         bucket = df[df["status"] == status]
 
         for i, row in bucket.iterrows():
-            flag = "<span style='color:red;font-weight:bold;'>🚩</span>" if row['escalated'] == 'Yes' else ""
+            flag = "🚩" if row['escalated'] == 'Yes' else ""          
             header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
             urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
             summary = summarize_issue_text(row['issue'])
