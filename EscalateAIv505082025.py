@@ -722,17 +722,31 @@ if st.sidebar.button("Send Email"):
     send_alert(msg, via="email")
     st.sidebar.success("✅ Email alert sent")
 
-df_resolved = fetch_escalations()
-df_resolved = df_resolved[df_resolved["status"] == "Resolved"]
+# 📲 WhatsApp Notification
+st.sidebar.markdown("### 📲 WhatsApp Alerts")
 
-if not df_resolved.empty:
-    escalation_id = st.sidebar.selectbox(
-        "🔢 Select Resolved Escalation ID",
-        df_resolved["id"].tolist()
-    )
+status_check = st.sidebar.selectbox("Case Status", ["Open", "In Progress", "Resolved"])
+
+if status_check == "Resolved":
+    df_resolved = fetch_escalations()
+    df_resolved = df_resolved[df_resolved["status"] == "Resolved"]
+
+    if not df_resolved.empty:
+        escalation_id = st.sidebar.selectbox(
+            "🔢 Select Resolved Escalation ID",
+            df_resolved["id"].tolist()
+        )
+
+        phone = st.sidebar.text_input("📞 Phone Number", "+91", help="Include country code (e.g., +91)")
+        msg = st.sidebar.text_area("📨 Message", f"Your issue with ID {escalation_id} has been resolved. Thank you!")
+
+        if st.sidebar.button("Send WhatsApp"):
+            # send_whatsapp_message(phone, msg)
+            st.sidebar.success(f"✅ WhatsApp sent to {phone} for Escalation ID {escalation_id}")
+    else:
+        st.sidebar.warning("No resolved escalations found.")
 else:
-    st.sidebar.warning("No resolved escalations found.")
-    escalation_id = None
+    st.sidebar.info("WhatsApp alerts are only available for 'Resolved' cases.")
 
 
 import os
