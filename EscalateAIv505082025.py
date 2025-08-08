@@ -552,25 +552,52 @@ st.sidebar.markdown("""
 
 # 📥 Upload Section
 
-st.sidebar.markdown("### 📥 Upload & Ingest")
-uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
-if uploaded_file:
-    df_excel = pd.read_excel(uploaded_file)
+import pandas as pd
+import streamlit as st
 
+# === 1. Upload and Read Excel ===
+uploaded_file = st.file_uploader("📄 Upload Excel File", type=["xlsx"])
+if uploaded_file:
+    try:
+        df_excel = pd.read_excel(uploaded_file)
+        st.success("✅ Excel file loaded successfully.")
+    except Exception as e:
+        st.error(f"❌ Failed to read Excel file: {e}")
+        st.stop()
+
+    # === 2. Validate Required Columns ===
+    required_columns = ["Customer", "Issue"]
+    missing_cols = [col for col in required_columns if col not in df_excel.columns]
+    if missing_cols:
+        st.error(f"Missing required columns: {', '.join(missing_cols)}")
+        st.stop()
+
+    # === 3. Process Each Row ===
     for idx, row in df_excel.iterrows():
-        issue = str(row.get("issue", "")).strip()
-        customer = str(row.get("customer", "Unknown")).strip()
+        issue = str(row.get("Issue", "")).strip()
+        customer = str(row.get("Customer", "Unknown")).strip()
 
         if not issue:
-            st.warning(f"⚠️ Row {idx + 1} skipped: missing issue text.")
+            st.warning(f"⚠️ Row {idx + 1} skipped: empty issue text.")
             continue
 
+        # === 4. Summarize and Classify ===
         issue_summary = summarize_issue_text(issue)
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
 
-        insert_escalation(customer, issue_summary, sentiment, urgency, severity, criticality, category, escalation_flag)
+        # === 5. Insert into Escalation Tracker ===
+        insert_escalation(
+            customer,
+            issue_summary,
+            sentiment,
+            urgency,
+            severity,
+            criticality,
+            category,
+            escalation_flag
+        )
 
-    st.sidebar.success("✅ File processed successfully")
+    st.sidebar.success("🎯 All valid rows processed successfully.")
 
 # 📤 Download Section
 st.sidebar.markdown("### 📤 Downloads")
