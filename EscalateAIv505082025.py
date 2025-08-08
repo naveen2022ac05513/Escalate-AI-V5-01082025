@@ -834,40 +834,25 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                 # Display ageing with color
                 st.markdown(f"**⏱️ Ageing:** <span style='color:{ageing_color}; font-weight:bold;'>{ageing_str}</span>", unsafe_allow_html=True)
 
+                # ✔️ Mark as Resolved
                 if colA.button("✔️ Mark as Resolved", key=f"resolved_{row['id']}"):
                     owner_email = row.get("owner_email", EMAIL_USER)
-                    update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], owner_email)
+                    update_escalation_status(row['id'], "Resolved", row.get("action_taken", ""), row.get("owner", ""), owner_email)
                     send_alert("Case marked as resolved.", via="email", recipient=owner_email)
-                    send_alert("Case marked as resolved.", via="email", recipient=row["owner_email"])
-                    send_alert("Case marked as resolved.", via="teams", recipient=row["owner_email"])
-
+                    send_alert("Case marked as resolved.", via="teams", recipient=owner_email)
+                
                 # 🚀 Escalate to N+1
-                    n1_email = colB.text_input("N+1 Email", key=f"n1email_{row['id']}")
-                    if colB.button("🚀 Escalate to N+1", key=f"n1btn_{row['id']}"):
-                        update_escalation_status(
-                            row['id'],
-                            "Escalated",
-                            row.get("action_taken", ""),
-                            row.get("owner", ""),
-                            owner_email=n1_email
-                        )
-                        send_alert(f"🚀 Escalation {row['id']} has been escalated to N+1.", via="email", recipient=n1_email)
-                        send_alert(f"🚀 Escalation {row['id']} has been escalated to N+1.", via="teams", recipient=n1_email)
-                        st.success(f"Escalated to N+1 ({n1_email})")
-                    
-                    # 🚀 Escalate to N+2
-                    n2_email = colB.text_input("N+2 Email", key=f"n2email_{row['id']}")
-                    if colB.button("🚀 Escalate to N+2", key=f"n2btn_{row['id']}"):
-                        update_escalation_status(
-                            row['id'],
-                            "Escalated",
-                            row.get("action_taken", ""),
-                            row.get("owner", ""),
-                            owner_email=n2_email
-                        )
-                        send_alert(f"🚀 Escalation {row['id']} has been escalated to N+2.", via="email", recipient=n2_email)
-                        send_alert(f"🚀 Escalation {row['id']} has been escalated to N+2.", via="teams", recipient=n2_email)
-                        st.success(f"Escalated to N+2 ({n2_email})")
+                n1_email = colB.text_input("N+1 Email", key=f"n1email_{row['id']}")
+                if colB.button("🚀 Escalate to N+1", key=f"n1btn_{row['id']}"):
+                    update_escalation_status(
+                        row['id'],
+                        "Escalated",
+                        row.get("action_taken", ""),
+                        row.get("owner", ""),
+                        n1_email
+                    )
+                    send_alert("Case escalated to N+1.", via="email", recipient=n1_email)
+                    send_alert("Case escalated to N+1.", via="teams", recipient=n1_email)
 
 
                 st.markdown(f"**Issue:** {row['issue']}")
