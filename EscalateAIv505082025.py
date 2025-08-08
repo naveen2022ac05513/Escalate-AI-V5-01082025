@@ -871,28 +871,27 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                 new_owner_email = st.text_input("Owner Email", row.get("owner_email", ""), key=f"email_{row['id']}")
 
                 if st.button("💾 Save Changes", key=f"save_{row['id']}"):
-                    owner_email = row.get("owner_email", EMAIL_USER)
-                    update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], owner_email)
-                    send_alert("Case marked as resolved.", via="email", recipient=owner_email)
+                    update_escalation_status(row['id'], new_status, new_action, new_owner, new_owner_email)
                     st.success("Escalation updated.")
-
+                
                     notification_message = f"""
                     🔔 Hello {new_owner},
-
+                
                     The escalation case #{row['id']} assigned to you has been updated:
-
+                
                     • Status: {new_status}
                     • Action Taken: {new_action}
                     • Category: {row['category']}
                     • Severity: {row['severity']}
                     • Urgency: {row['urgency']}
                     • Sentiment: {row['sentiment']}
-
+                
                     Please review the updates on the EscalateAI dashboard.
                     """
-
+                
                     send_alert(notification_message.strip(), via="email", recipient=new_owner_email)
                     send_alert(notification_message.strip(), via="teams", recipient=new_owner_email)
+
     
 # --- Escalated issues tab ---
 with tabs[1]:
