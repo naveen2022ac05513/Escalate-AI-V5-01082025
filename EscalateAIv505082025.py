@@ -535,7 +535,7 @@ st.markdown(
     </style>
     <header>
         <div>
-            <h1 style="margin: 0; padding-left: 20px;">🚨 EscalateAI – AI Based Customer Escalation Prediction & Management Tool </h1>
+            <h1 style="margin: 0; padding-left: 20px;">🚨 AI-Driven Escalation Management for Exceptional Customer experience </h1>
         </div>
     </header>
     """,
