@@ -724,15 +724,24 @@ if st.sidebar.button("Send Email"):
 
 # 📲 WhatsApp Notification
 st.sidebar.markdown("### 📲 WhatsApp Alerts")
+
 status_check = st.sidebar.selectbox("Case Status", ["Open", "In Progress", "Resolved"])
+
 if status_check == "Resolved":
-    phone = st.sidebar.text_input("Phone Number", "+91")
-    msg = st.sidebar.text_area("Message", "Your issue has been resolved.")
+    st.sidebar.markdown("Please provide Escalation ID to notify:")
+    escalation_id = st.sidebar.text_input("🔢 Escalation ID", placeholder="e.g., SESICE-2500123")
+    phone = st.sidebar.text_input("📞 Phone Number", "+91", help="Include country code (e.g., +91)")
+    msg = st.sidebar.text_area("📨 Message", f"Your issue with ID {escalation_id} has been resolved. Thank you!")
+
     if st.sidebar.button("Send WhatsApp"):
-        # send_whatsapp_message(phone, msg)
-        st.sidebar.success(f"✅ WhatsApp sent to {phone}")
+        if escalation_id.strip() == "":
+            st.sidebar.error("Please enter a valid Escalation ID.")
+        else:
+            # send_whatsapp_message(phone, msg)
+            st.sidebar.success(f"✅ WhatsApp sent to {phone} for Escalation ID {escalation_id}")
 else:
-    st.sidebar.info("Available only for 'Resolved' cases.")
+    st.sidebar.info("WhatsApp alerts are only available for 'Resolved' cases.")
+
 
 import os
 import smtplib
