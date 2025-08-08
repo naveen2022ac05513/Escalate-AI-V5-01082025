@@ -249,6 +249,7 @@ def parse_emails():
     """
     Parses unseen emails, extracts summaries,
     and filters forwarded/repeated content via normalized hashing.
+    Ensures IMAP connection is closed even on error.
     """
     from dotenv import load_dotenv
     load_dotenv()
@@ -258,6 +259,7 @@ def parse_emails():
     email_pass = os.getenv("EMAIL_PASS")
 
     emails = []
+    conn = None
 
     try:
         conn = imaplib.IMAP4_SSL(imap_server)
@@ -295,12 +297,18 @@ def parse_emails():
                             "issue": summary
                         })
 
-        conn.logout()
-        return emails
-
     except Exception as e:
         st.error(f"Failed to parse emails: {e}")
-        return []
+
+    finally:
+        if conn:
+            try:
+                conn.logout()
+                print("✅ IMAP connection closed.")
+            except Exception as logout_error:
+                print(f"⚠️ IMAP logout failed: {logout_error}")
+
+    return emails
         
 # -----------------------
 # --- NLP & Tagging ---
