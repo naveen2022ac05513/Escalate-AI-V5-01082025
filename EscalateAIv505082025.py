@@ -216,13 +216,14 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 # --------------------
 
 global_seen_hashes = set()
-for email in email_list:
-    body = email.get("body", "")
-    email_hash = hashlib.md5(body.encode()).hexdigest()
-
-    if email_hash in seen_hashes:
-        continue  # Skip duplicate
-    seen_hashes.add(email_hash)
+# REMOVE or COMMENT OUT this invalid block:
+# for email in email_list:
+#     body = email.get("body", "")
+#     email_hash = hashlib.md5(body.encode()).hexdigest()
+#     if email_hash in seen_hashes:
+#         continue  # Skip duplicate
+#     seen_hashes.add(email_hash)
+#     # Process email...
 
     # Process email...
 
