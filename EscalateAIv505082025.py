@@ -556,12 +556,20 @@ st.sidebar.markdown("### 📥 Upload & Ingest")
 uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
 if uploaded_file:
     df_excel = pd.read_excel(uploaded_file)
-    for _, row in df_excel.iterrows():
+
+    for idx, row in df_excel.iterrows():
+        issue = str(row.get("issue", "")).strip()
+        customer = str(row.get("customer", "Unknown")).strip()
+
+        if not issue:
+            st.warning(f"⚠️ Row {idx + 1} skipped: missing issue text.")
+            continue
+
         issue_summary = summarize_issue_text(issue)
-        customer = str(row.get("customer", "Unknown"))
         sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
-        #insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag)
+
         insert_escalation(customer, issue_summary, sentiment, urgency, severity, criticality, category, escalation_flag)
+
     st.sidebar.success("✅ File processed successfully")
 
 # 📤 Download Section
