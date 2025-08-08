@@ -690,27 +690,32 @@ if not breaches.empty:
     )
 
 # 🔍 Filters
-st.sidebar.markdown("### 🔍 Escalation Filters")
-df = fetch_escalations()
+# Existing filters
 status = st.sidebar.selectbox("Status", ["All", "Open", "In Progress", "Resolved"])
 severity = st.sidebar.selectbox("Severity", ["All"] + sorted(df["severity"].dropna().unique()))
 sentiment = st.sidebar.selectbox("Sentiment", ["All"] + sorted(df["sentiment"].dropna().unique()))
 category = st.sidebar.selectbox("Category", ["All"] + sorted(df["category"].dropna().unique()))
 view = st.sidebar.radio("Escalation View", ["All", "Escalated", "Non-Escalated"])
 
-filtered_df = df.copy()
-if status != "All":
-    filtered_df = filtered_df[filtered_df["status"] == status]
-if severity != "All":
-    filtered_df = filtered_df[filtered_df["severity"] == severity]
-if sentiment != "All":
-    filtered_df = filtered_df[filtered_df["sentiment"] == sentiment]
-if category != "All":
-    filtered_df = filtered_df[filtered_df["category"] == category]
-if view == "Escalated":
-    filtered_df = filtered_df[filtered_df["escalated"] == "Yes"]
-elif view == "Non-Escalated":
-    filtered_df = filtered_df[filtered_df["escalated"] != "Yes"]
+# New age filter
+st.sidebar.markdown("### ⏱️ Ageing Filter")
+age_filter = st.sidebar.selectbox("Filter by Age", [
+    "All",
+    "> 4 hours",
+    "4–12 hours",
+    "> 12 hours"
+])
+
+# Apply filters
+df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+df['age_hours'] = (datetime.datetime.now() - df['timestamp']).dt.total_seconds() / 3600
+
+if age_filter == "> 4 hours":
+    filtered_df = filtered_df[filtered_df['age_hours'] > 4]
+elif age_filter == "4–12 hours":
+    filtered_df = filtered_df[(filtered_df['age_hours'] >= 4) & (filtered_df['age_hours'] <= 12)]
+elif age_filter == "> 12 hours":
+    filtered_df = filtered_df[filtered_df['age_hours'] > 12]
 
 # 🔔 Manual Alerts
 st.sidebar.markdown("### 🔔 Manual Notifications")
