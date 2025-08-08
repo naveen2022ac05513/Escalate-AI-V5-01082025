@@ -692,7 +692,7 @@ if not breaches.empty:
 # 🔍 Filters
 st.sidebar.markdown("### 🔍 Escalation Filters")
 df = fetch_escalations()
-status = st.sidebar.selectbox("Status", ["All"] + sorted(df["status"].dropna().unique()))
+status = st.sidebar.selectbox("Status", ["All", "Open", "In Progress", "Resolved"])
 severity = st.sidebar.selectbox("Severity", ["All"] + sorted(df["severity"].dropna().unique()))
 sentiment = st.sidebar.selectbox("Sentiment", ["All"] + sorted(df["sentiment"].dropna().unique()))
 category = st.sidebar.selectbox("Category", ["All"] + sorted(df["category"].dropna().unique()))
@@ -799,7 +799,7 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
         bucket = df[df["status"] == status]
 
         for i, row in bucket.iterrows():
-            flag = "🚩" if row['escalated'] == 'Yes' else ""
+            flag = "<span style='color:red;font-weight:bold;'>🚩</span>" if row['escalated'] == 'Yes' else ""
             header_color = SEVERITY_COLORS.get(row['severity'], "#000000")
             urgency_color = URGENCY_COLORS.get(row['urgency'], "#000000")
             summary = summarize_issue_text(row['issue'])
