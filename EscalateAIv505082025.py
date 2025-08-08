@@ -14,6 +14,7 @@ import email
 from email.header import decode_header
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import smtplib
+import hashlib
 import requests
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
@@ -215,6 +216,15 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
 # --------------------
 
 global_seen_hashes = set()
+for email in email_list:
+    body = email.get("body", "")
+    email_hash = hashlib.md5(body.encode()).hexdigest()
+
+    if email_hash in seen_hashes:
+        continue  # Skip duplicate
+    seen_hashes.add(email_hash)
+
+    # Process email...
 
 def parse_emails():
     """
