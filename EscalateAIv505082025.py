@@ -602,44 +602,45 @@ uploaded_file = st.sidebar.file_uploader("Choose an Excel file", type=["xlsx"])
 if uploaded_file:
     try:
         df_excel = pd.read_excel(uploaded_file)
-        st.success("✅ Excel file loaded successfully.")
+        st.sidebar.success("✅ Excel file loaded successfully.")
     except Exception as e:
-        st.error(f"❌ Failed to read Excel file: {e}")
+        st.sidebar.error(f"❌ Failed to read Excel file: {e}")
         st.stop()
 
     # === 2. Validate Required Columns ===
     required_columns = ["Customer", "Issue"]
     missing_cols = [col for col in required_columns if col not in df_excel.columns]
     if missing_cols:
-        st.error(f"Missing required columns: {', '.join(missing_cols)}")
+        st.sidebar.error(f"Missing required columns: {', '.join(missing_cols)}")
         st.stop()
 
-    # === 3. Process Each Row ===
-    for idx, row in df_excel.iterrows():
-        issue = str(row.get("Issue", "")).strip()
-        customer = str(row.get("Customer", "Unknown")).strip()
+    # === 3. Add Analyze Button ===
+    if st.sidebar.button("🔍 Analyze & Insert"):
+        processed_count = 0
+        for idx, row in df_excel.iterrows():
+            issue = str(row.get("Issue", "")).strip()
+            customer = str(row.get("Customer", "Unknown")).strip()
+            if not issue:
+                st.warning(f"⚠️ Row {idx + 1} skipped: empty issue text.")
+                continue
 
-        if not issue:
-            st.warning(f"⚠️ Row {idx + 1} skipped: empty issue text.")
-            continue
+            issue_summary = summarize_issue_text(issue)
+            sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
 
-        # === 4. Summarize and Classify ===
-        issue_summary = summarize_issue_text(issue)
-        sentiment, urgency, severity, criticality, category, escalation_flag = analyze_issue(issue)
+            insert_escalation(
+                customer,
+                issue_summary,
+                sentiment,
+                urgency,
+                severity,
+                criticality,
+                category,
+                escalation_flag
+            )
+            processed_count += 1
 
-        # === 5. Insert into Escalation Tracker ===
-        insert_escalation(
-            customer,
-            issue_summary,
-            sentiment,
-            urgency,
-            severity,
-            criticality,
-            category,
-            escalation_flag
-        )
-
-    st.sidebar.success("🎯 All valid rows processed successfully.")
+        st.sidebar.success(f"🎯 {processed_count} rows processed successfully.")
+        
 # 📤 Download Section
 st.sidebar.markdown("### 📤 Downloads")
 col1, col2 = st.sidebar.columns(2)
