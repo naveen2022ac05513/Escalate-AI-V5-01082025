@@ -106,10 +106,12 @@ def get_next_escalation_id():
 def ensure_schema():
     """
     Ensure the SQLite database and escalations table exist.
-    Creates the table with all necessary columns for tracking escalations.
+    Adds 'owner_email' if missing.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    # Create table with new column if doesn't exist
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS escalations (
             id TEXT PRIMARY KEY,
@@ -124,6 +126,7 @@ def ensure_schema():
             timestamp TEXT,
             action_taken TEXT,
             owner TEXT,
+            owner_email TEXT,
             escalated TEXT,
             priority TEXT,
             escalation_flag TEXT,
@@ -132,6 +135,13 @@ def ensure_schema():
             user_feedback TEXT
         )
     ''')
+
+    # Check if 'owner_email' column exists, add if not
+    try:
+        cursor.execute("SELECT owner_email FROM escalations LIMIT 1")
+    except sqlite3.OperationalError:
+        cursor.execute("ALTER TABLE escalations ADD COLUMN owner_email TEXT")
+
     conn.commit()
     conn.close()
 
@@ -155,28 +165,27 @@ def generate_issue_hash(issue_text):
     clean_text = re.sub(r'\s+', ' ', issue_text.lower().strip())
     return hashlib.md5(clean_text.encode()).hexdigest() 
     
-def insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag):
-    """
-    Insert a new escalation record into the SQLite database.
-    Fields like status default to "Open", timestamps set to now.
-    """
+def insert_escalation(customer, issue, sentiment, urgency, severity, criticality, category, escalation_flag, owner_email=""):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     new_id = get_next_escalation_id()
     now = datetime.datetime.now().isoformat()
+
     cursor.execute('''
         INSERT INTO escalations (
             id, customer, issue, sentiment, urgency, severity, criticality, category,
             status, timestamp, escalated, priority, escalation_flag,
-            action_taken, owner, action_owner, status_update_date, user_feedback
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            action_taken, owner, action_owner, status_update_date, user_feedback, owner_email
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         new_id, customer, issue, sentiment, urgency, severity, criticality, category,
         "Open", now, escalation_flag, "normal", escalation_flag,
-        "", "", "", "", ""
+        "", "", "", "", "", owner_email
     ))
+
     conn.commit()
     conn.close()
+
 
 
 def fetch_escalations():
@@ -195,23 +204,20 @@ def fetch_escalations():
     return df
 
 
-def update_escalation_status(esc_id, status, action_taken, action_owner, feedback=None, sentiment=None, criticality=None, notes=None):
-    """
-    Update an escalation’s status, action taken, owner, feedback, sentiment, and criticality.
-    Also logs the status update timestamp and user notes.
-    """
+def update_escalation_status(esc_id, status, action_taken, action_owner, owner_email=None, feedback=None, sentiment=None, criticality=None, notes=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         UPDATE escalations
         SET status = ?, action_taken = ?, action_owner = ?, status_update_date = ?, 
-            user_feedback = ?, sentiment = ?, criticality = ?
+            owner_email = ?, user_feedback = ?, sentiment = ?, criticality = ?
         WHERE id = ?
     ''', (
         status,
         action_taken,
         action_owner,
         datetime.datetime.now().isoformat(),
+        owner_email,
         notes,
         sentiment,
         criticality,
@@ -219,6 +225,7 @@ def update_escalation_status(esc_id, status, action_taken, action_owner, feedbac
     ))
     conn.commit()
     conn.close()
+
 
 
 
@@ -828,7 +835,9 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                 st.markdown(f"**⏱️ Ageing:** <span style='color:{ageing_color}; font-weight:bold;'>{ageing_str}</span>", unsafe_allow_html=True)
 
                 if colA.button("✔️ Mark as Resolved", key=f"resolved_{row['id']}"):
-                    update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], row["owner_email"])
+                    owner_email = row.get("owner_email", EMAIL_USER)
+                    update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], owner_email)
+                    send_alert("Case marked as resolved.", via="email", recipient=owner_email)
                     send_alert("Case marked as resolved.", via="email", recipient=row["owner_email"])
                     send_alert("Case marked as resolved.", via="teams", recipient=row["owner_email"])
 
@@ -855,7 +864,9 @@ for status, col in zip(["Open", "In Progress", "Resolved"], [col1, col2, col3]):
                 new_owner_email = st.text_input("Owner Email", row.get("owner_email", ""), key=f"email_{row['id']}")
 
                 if st.button("💾 Save Changes", key=f"save_{row['id']}"):
-                    update_escalation_status(row['id'], new_status, new_action, new_owner, new_owner_email)
+                    owner_email = row.get("owner_email", EMAIL_USER)
+                    update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], owner_email)
+                    send_alert("Case marked as resolved.", via="email", recipient=owner_email)
                     st.success("Escalation updated.")
 
                     notification_message = f"""
@@ -896,7 +907,9 @@ with tabs[2]:
             crit = st.selectbox("Criticality", ["Low", "Medium", "High", "Urgent"], key=f"crit_{row['id']}")
             notes = st.text_area("Notes", key=f"note_{row['id']}")
             if st.button("Submit", key=f"btn_{row['id']}"):
-                update_escalation_status(row['id'], row['status'], row.get('action_taken',''), row.get('owner',''), fb_map[fb], sent, crit, notes)
+                owner_email = row.get("owner_email", EMAIL_USER)
+                update_escalation_status(row['id'], "Resolved", row["action_taken"], row["owner"], owner_email)
+                send_alert("Case marked as resolved.", via="email", recipient=owner_email)
                 st.success("Feedback saved.")
     
     # Retrain model button
